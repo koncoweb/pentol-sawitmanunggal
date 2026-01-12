@@ -14,4 +14,9 @@ export const authClient = createAuthClient({
         set: async (key: string, value: string) => await SecureStore.setItemAsync(key, value),
         delete: async (key: string) => await SecureStore.deleteItemAsync(key),
     },
+    fetchOptions: {
+        headers: {
+            Origin: "https://pentol.sawitmanunggal.com"
+        }
+    }
 });
