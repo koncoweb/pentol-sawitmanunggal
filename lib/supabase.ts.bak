@@ -1,0 +1,117 @@
+import 'react-native-url-polyfill/auto';
+import { createClient } from '@supabase/supabase-js';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+
+const ExpoSecureStoreAdapter = {
+  getItem: async (key: string) => {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage === 'undefined') {
+        return null;
+      }
+      return localStorage.getItem(key);
+    }
+    return SecureStore.getItemAsync(key);
+  },
+  setItem: async (key: string, value: string) => {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(key, value);
+      }
+      return;
+    }
+    SecureStore.setItemAsync(key, value);
+  },
+  removeItem: async (key: string) => {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(key);
+      }
+      return;
+    }
+    SecureStore.deleteItemAsync(key);
+  },
+};
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storage: ExpoSecureStoreAdapter,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+  global: {
+    headers: {
+      'x-client-info': 'pentol-mobile-app',
+    },
+  },
+  db: {
+    schema: 'public',
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 2,
+    },
+  },
+});
+
+export type Database = {
+  public: {
+    Tables: {
+      profiles: {
+        Row: {
+          id: string;
+          email: string;
+          full_name: string;
+          role: 'krani_panen' | 'krani_buah' | 'mandor' | 'asisten' | 'estate_manager' | 'regional_gm';
+          divisi_id: string | null;
+          gang_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id: string;
+          email: string;
+          full_name: string;
+          role: 'krani_panen' | 'krani_buah' | 'mandor' | 'asisten' | 'estate_manager' | 'regional_gm';
+          divisi_id?: string | null;
+          gang_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          full_name?: string;
+          role?: 'krani_panen' | 'krani_buah' | 'mandor' | 'asisten' | 'estate_manager' | 'regional_gm';
+          divisi_id?: string | null;
+          gang_id?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
+      divisi: {
+        Row: {
+          id: string;
+          name: string;
+          estate_name: string;
+          region_name: string;
+          created_at: string;
+          updated_at: string;
+        };
+      };
+      gang: {
+        Row: {
+          id: string;
+          divisi_id: string;
+          name: string;
+          created_at: string;
+          updated_at: string;
+        };
+      };
+    };
+  };
+};
