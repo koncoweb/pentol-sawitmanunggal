@@ -66,44 +66,42 @@ export default function EditableDropdown({
         )}
       </View>
 
-      <Modal visible={visible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{label}</Text>
-              <TouchableOpacity onPress={() => setVisible(false)}>
-                <X size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.itemList}>
-              {items.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>Tidak ada data</Text>
-                </View>
-              ) : (
-                items.map((item) => (
-                  <TouchableOpacity
-                    key={item.value}
-                    style={[
-                      styles.item,
-                      item.value === value && styles.itemSelected,
-                    ]}
-                    onPress={() => handleSelect(item.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.itemText,
-                        item.value === value && styles.itemTextSelected,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
+      <Modal visible={visible} animationType="slide">
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{label}</Text>
+            <TouchableOpacity onPress={() => setVisible(false)}>
+              <X size={24} color="#333" />
+            </TouchableOpacity>
           </View>
+
+          <ScrollView style={styles.itemList}>
+            {items.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Tidak ada data</Text>
+              </View>
+            ) : (
+              items.map((item) => (
+                <TouchableOpacity
+                  key={item.value}
+                  style={[
+                    styles.item,
+                    item.value === value && styles.itemSelected,
+                  ]}
+                  onPress={() => handleSelect(item.value)}
+                >
+                  <Text
+                    style={[
+                      styles.itemText,
+                      item.value === value && styles.itemTextSelected,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -143,17 +141,9 @@ const styles = StyleSheet.create({
     right: 12,
     padding: 4,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '60%',
-    paddingBottom: 20,
+    flex: 1,
   },
   modalHeader: {
     flexDirection: 'row',

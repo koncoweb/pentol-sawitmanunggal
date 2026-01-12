@@ -11,7 +11,7 @@ import {
   Image,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useNavigation } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDbClient } from '@/lib/db';
 import { ChevronLeft, Save, Camera, X, Check, Calendar } from 'lucide-react-native';
@@ -49,8 +49,17 @@ interface Gang {
 
 export default function InputPanenScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [isFetchingData, setIsFetchingData] = useState(false); // State for loading indicator
+
+  const dataCache = useRef<Record<string, {
+    gang: Gang[],
+    blok: Blok[],
+    pemanen: Pemanen[],
+    tph: TPH[]
+  }>>({});
   const [divisiList, setDivisiList] = useState<Divisi[]>([]);
   const [blokList, setBlokList] = useState<Blok[]>([]);
   const [pemanenList, setPemanenList] = useState<Pemanen[]>([]);
@@ -94,9 +103,12 @@ export default function InputPanenScreen() {
     // Load data divisi user saat mount
     const divisiId = formData.divisi_id || profile?.divisi_id;
     if (divisiId) {
+      if (!formData.divisi_id && profile?.divisi_id) {
+        setFormData(prev => ({ ...prev, divisi_id: profile?.divisi_id || '' }));
+      }
       loadDivisiData(divisiId);
     }
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     // Load data ketika divisi berubah
@@ -121,6 +133,18 @@ export default function InputPanenScreen() {
   const loadDivisiData = async (divisiId: string) => {
     if (!divisiId) return;
 
+    // Check cache first
+    if (dataCache.current[divisiId]) {
+      console.log('Loading data from cache for divisi:', divisiId);
+      const cached = dataCache.current[divisiId];
+      setGangList(cached.gang);
+      setBlokList(cached.blok);
+      setPemanenList(cached.pemanen);
+      setTphList(cached.tph);
+      return;
+    }
+
+    setIsFetchingData(true);
     try {
       console.log('Loading data for divisi:', divisiId);
       const db = await getDbClient();
@@ -130,7 +154,7 @@ export default function InputPanenScreen() {
         db.query('SELECT id, name FROM gang WHERE divisi_id = $1 ORDER BY name LIMIT 50', [divisiId]),
         db.query('SELECT id, name FROM blok WHERE divisi_id = $1 ORDER BY name LIMIT 100', [divisiId]),
         db.query(`
-          SELECT p.id, p.operator_code, p.name 
+          SELECT p.id, p.nik as operator_code, p.name 
           FROM pemanen p 
           JOIN gang g ON p.gang_id = g.id 
           WHERE g.divisi_id = $1 AND p.status_aktif = true 
@@ -147,10 +171,23 @@ export default function InputPanenScreen() {
 
       await db.end();
 
-      if (gangResult) setGangList(gangResult.rows as any[]);
-      if (blokResult) setBlokList(blokResult.rows as any[]);
-      if (pemanenResult) setPemanenList(pemanenResult.rows as any[]);
-      if (tphResult) setTphList(tphResult.rows as any[]);
+      const newGangList = (gangResult?.rows || []) as any[];
+      const newBlokList = (blokResult?.rows || []) as any[];
+      const newPemanenList = (pemanenResult?.rows || []) as any[];
+      const newTphList = (tphResult?.rows || []) as any[];
+
+      if (gangResult) setGangList(newGangList);
+      if (blokResult) setBlokList(newBlokList);
+      if (pemanenResult) setPemanenList(newPemanenList);
+      if (tphResult) setTphList(newTphList);
+
+      // Save to cache
+      dataCache.current[divisiId] = {
+        gang: newGangList,
+        blok: newBlokList,
+        pemanen: newPemanenList,
+        tph: newTphList
+      };
 
       console.log('Loaded data:', {
         gang: gangResult?.rows?.length,
@@ -160,52 +197,62 @@ export default function InputPanenScreen() {
       });
     } catch (error) {
       console.error('Error loading divisi data:', error);
+      Alert.alert(
+        'Error Loading Data',
+        'Gagal memuat data divisi. Silakan coba lagi.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Coba Lagi', onPress: () => loadDivisiData(divisiId) }
+        ]
+      );
+    } finally {
+      setIsFetchingData(false);
     }
   };
 
   const handleSubmit = async () => {
-    // Validate required fields
-    if (formData.blok_ids.length === 0 || formData.pemanen_ids.length === 0 || !formData.rotasi) {
-      Alert.alert('Error', 'Mohon isi semua field yang wajib (Blok, Pemanen, Rotasi)');
+    if (!formData.divisi_id) {
+      Alert.alert('Error', 'Mohon pilih Divisi');
       return;
     }
-
-    if (!profile?.divisi_id || !profile?.id) {
-      Alert.alert('Error', 'Profil tidak lengkap');
+    if (formData.blok_ids.length === 0) {
+      Alert.alert('Error', 'Mohon pilih Blok');
+      return;
+    }
+    if (formData.pemanen_ids.length === 0) {
+      Alert.alert('Error', 'Mohon pilih Pemanen');
+      return;
+    }
+    if (!formData.rotasi) {
+      Alert.alert('Error', 'Mohon isi Rotasi');
+      return;
+    }
+    if (!formData.hasil_panen_bjd) {
+      Alert.alert('Error', 'Mohon isi Hasil Panen (BJD)');
       return;
     }
 
     setLoading(true);
+    console.log('Submitting harvest data...', formData);
 
     try {
-      // Photo upload disabled for migration
-      /*
-      let fotoUrl: string | null = null;
-
-      if (photoUri) {
-        setUploadingPhoto(true);
-        fotoUrl = await uploadPhotoToStorage(photoUri);
-        setUploadingPhoto(false);
-
-        if (!fotoUrl) {
-          Alert.alert('Warning', 'Foto gagal diupload, data panen akan disimpan tanpa foto');
-        }
+      if (!profile?.id) {
+        throw new Error('User session not found');
       }
-      */
-      
+
+      console.log('Connecting to database...');
       const db = await getDbClient();
-      
-      // Iterate over selected blocks and pemanens
-      // Note: We distribute the yield/counts evenly or duplicate? 
-      // For now, we will duplicate if multiple selected (User should input per block ideally)
-      // Or we warn if multiple blocks selected with single yield.
-      // Logic: Create a record for each combination.
+      console.log('Database connected');
       
       await db.query('BEGIN');
       
       const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
       const bjr = parseInt(formData.bjr) || 0;
       const bjd = jjg * bjr; // Calculate total weight based on JJG * BJR
+      const totalRecords = formData.blok_ids.length * formData.pemanen_ids.length;
+      let insertedCount = 0;
+
+      console.log(`Preparing to insert ${totalRecords} records...`);
 
       for (const blokId of formData.blok_ids) {
         for (const pemanenId of formData.pemanen_ids) {
@@ -220,7 +267,7 @@ export default function InputPanenScreen() {
              )
            `, [
              formData.tanggal,
-             profile.divisi_id,
+             formData.divisi_id, // Use selected divisi_id, not profile.divisi_id
              blokId,
              pemanenId,
              formData.tph_id || null,
@@ -241,21 +288,29 @@ export default function InputPanenScreen() {
              formData.nomor_panen,
              jjg // Insert count
            ]);
+           insertedCount++;
         }
       }
       
       await db.query('COMMIT');
       await db.end();
+      console.log(`Successfully inserted ${insertedCount} records`);
 
-      Alert.alert('Berhasil', 'Data panen berhasil disimpan', [
+      Alert.alert('Berhasil', `${insertedCount} data panen berhasil disimpan ke database`, [
         {
           text: 'OK',
-          onPress: () => router.back(),
+          onPress: () => {
+            if (navigation.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/(tabs)/mandor');
+            }
+          },
         },
       ]);
     } catch (error: any) {
       console.error('Error saving harvest:', error);
-      Alert.alert('Error', error.message || 'Gagal menyimpan data panen');
+      Alert.alert('Error', `Gagal menyimpan data: ${error.message || 'Unknown error'}. Cek koneksi internet.`);
     } finally {
       setLoading(false);
       setUploadingPhoto(false);
@@ -285,6 +340,14 @@ export default function InputPanenScreen() {
     }
 
     setShowCamera(true);
+  };
+
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/mandor');
+    }
   };
 
   const handleTakePhoto = async () => {
@@ -347,7 +410,7 @@ export default function InputPanenScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
             <ChevronLeft size={24} color="#fff" />
           </TouchableOpacity>
           <Image
@@ -363,6 +426,13 @@ export default function InputPanenScreen() {
       </View>
 
       <ScrollView style={styles.content}>
+        {isFetchingData && (
+          <View style={styles.loadingBanner}>
+            <ActivityIndicator size="small" color="#2d5016" />
+            <Text style={styles.loadingText}>Memuat data divisi...</Text>
+          </View>
+        )}
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Informasi Umum</Text>
 
@@ -414,8 +484,6 @@ export default function InputPanenScreen() {
                     pemanen_ids: [],
                     tph_id: '',
                   }));
-                  // Load new data
-                  loadDivisiData(value);
                 }}
                 required
                 searchable={divisiList.length > 5}
@@ -971,5 +1039,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
     fontWeight: '500',
+  },
+  loadingBanner: {
+    backgroundColor: '#e8f5e9',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    margin: 16,
+    marginBottom: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#c8e6c9',
   },
 });

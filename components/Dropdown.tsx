@@ -79,57 +79,55 @@ export default function Dropdown({
         <ChevronDown size={20} color="#999" />
       </TouchableOpacity>
 
-      <Modal visible={visible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{label}</Text>
-              <TouchableOpacity onPress={handleClose}>
-                <X size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
-
-            {searchable && (
-              <View style={styles.searchContainer}>
-                <Search size={20} color="#999" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Cari..."
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoFocus
-                />
-              </View>
-            )}
-
-            <ScrollView style={styles.itemList}>
-              {filteredItems.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>Tidak ada data</Text>
-                </View>
-              ) : (
-                filteredItems.map((item) => (
-                  <TouchableOpacity
-                    key={item.value}
-                    style={[
-                      styles.item,
-                      item.value === value && styles.itemSelected,
-                    ]}
-                    onPress={() => handleSelect(item.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.itemText,
-                        item.value === value && styles.itemTextSelected,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
+      <Modal visible={visible} animationType="slide">
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{label}</Text>
+            <TouchableOpacity onPress={handleClose}>
+              <X size={24} color="#333" />
+            </TouchableOpacity>
           </View>
+
+          {searchable && (
+            <View style={styles.searchContainer}>
+              <Search size={20} color="#999" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Cari..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+            </View>
+          )}
+
+          <ScrollView style={styles.itemList}>
+            {filteredItems.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Tidak ada data</Text>
+              </View>
+            ) : (
+              filteredItems.map((item) => (
+                <TouchableOpacity
+                  key={item.value}
+                  style={[
+                    styles.item,
+                    item.value === value && styles.itemSelected,
+                  ]}
+                  onPress={() => handleSelect(item.value)}
+                >
+                  <Text
+                    style={[
+                      styles.itemText,
+                      item.value === value && styles.itemTextSelected,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -170,17 +168,9 @@ const styles = StyleSheet.create({
   selectorTextPlaceholder: {
     color: '#999',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-    paddingBottom: 20,
+    flex: 1,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -215,6 +205,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   item: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f5f5f5',
@@ -225,6 +218,7 @@ const styles = StyleSheet.create({
   itemText: {
     fontSize: 15,
     color: '#333',
+    flex: 1,
   },
   itemTextSelected: {
     color: '#2d5016',

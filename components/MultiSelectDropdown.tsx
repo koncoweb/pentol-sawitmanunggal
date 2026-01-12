@@ -108,82 +108,80 @@ export default function MultiSelectDropdown({
         </View>
       )}
 
-      <Modal visible={visible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{label}</Text>
-              <TouchableOpacity onPress={handleClose}>
-                <X size={24} color="#333" />
-              </TouchableOpacity>
-            </View>
+      <Modal visible={visible} animationType="slide">
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{label}</Text>
+            <TouchableOpacity onPress={handleClose}>
+              <X size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
 
-            {searchable && (
-              <View style={styles.searchContainer}>
-                <Search size={20} color="#999" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Cari..."
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoFocus
-                />
-              </View>
+          {searchable && (
+            <View style={styles.searchContainer}>
+              <Search size={20} color="#999" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Cari..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+            </View>
+          )}
+
+          <View style={styles.selectionInfo}>
+            <Text style={styles.selectionText}>
+              {values.length} dipilih
+            </Text>
+            {values.length > 0 && (
+              <TouchableOpacity onPress={handleClear}>
+                <Text style={styles.clearButtonModal}>Hapus Semua</Text>
+              </TouchableOpacity>
             )}
+          </View>
 
-            <View style={styles.selectionInfo}>
-              <Text style={styles.selectionText}>
-                {values.length} dipilih
-              </Text>
-              {values.length > 0 && (
-                <TouchableOpacity onPress={handleClear}>
-                  <Text style={styles.clearButtonModal}>Hapus Semua</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <ScrollView style={styles.itemList}>
-              {filteredItems.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyText}>Tidak ada data</Text>
-                </View>
-              ) : (
-                filteredItems.map((item) => {
-                  const isSelected = values.includes(item.value);
-                  return (
-                    <TouchableOpacity
-                      key={item.value}
+          <ScrollView style={styles.itemList}>
+            {filteredItems.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Tidak ada data</Text>
+              </View>
+            ) : (
+              filteredItems.map((item) => {
+                const isSelected = values.includes(item.value);
+                return (
+                  <TouchableOpacity
+                    key={item.value}
+                    style={[
+                      styles.item,
+                      isSelected && styles.itemSelected,
+                    ]}
+                    onPress={() => handleToggle(item.value)}
+                  >
+                    <Text
                       style={[
-                        styles.item,
-                        isSelected && styles.itemSelected,
+                        styles.itemText,
+                        isSelected && styles.itemTextSelected,
                       ]}
-                      onPress={() => handleToggle(item.value)}
                     >
-                      <Text
-                        style={[
-                          styles.itemText,
-                          isSelected && styles.itemTextSelected,
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                      {isSelected && (
-                        <Check size={20} color="#2d5016" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
+                      {item.label}
+                    </Text>
+                    {isSelected && (
+                      <Check size={20} color="#2d5016" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </ScrollView>
 
-            <View style={styles.modalFooter}>
-              <TouchableOpacity
-                style={styles.doneButton}
-                onPress={handleClose}
-              >
-                <Text style={styles.doneButtonText}>Selesai</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.modalFooter}>
+            <TouchableOpacity
+              style={styles.doneButton}
+              onPress={handleClose}
+            >
+              <Text style={styles.doneButtonText}>Selesai</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -255,16 +253,9 @@ const styles = StyleSheet.create({
     color: '#2d5016',
     fontWeight: '500',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
   modalContent: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
+    flex: 1,
   },
   modalHeader: {
     flexDirection: 'row',
