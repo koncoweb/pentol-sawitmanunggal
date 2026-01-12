@@ -1,40 +1,120 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDbClient } from '@/lib/db';
 import { CheckSquare, Target, Users, TrendingUp } from 'lucide-react-native';
 
 export default function MandorDashboard() {
+  const router = useRouter();
   const { profile } = useAuth();
+  const [refreshing, setRefreshing] = useState(false);
+  const [stats, setStats] = useState({
+    pending: 0,
+    target: 1500,
+    realization: 0,
+    members: 0,
+  });
+
+  const loadStats = useCallback(async () => {
+    if (!profile) return;
+    
+    const db = await getDbClient();
+    try {
+      // 1. Pending Approvals
+      let pendingQuery = "SELECT COUNT(*) as count FROM harvest_records WHERE status = 'submitted'";
+      const pendingParams: any[] = [];
+      
+      // 2. Realization Today
+      let realQuery = "SELECT SUM(jumlah_jjg) as total FROM harvest_records WHERE tanggal = CURRENT_DATE";
+      const realParams: any[] = [];
+
+      // 3. Members
+      let membersQuery = "SELECT COUNT(*) as count FROM pemanen WHERE status_aktif = true";
+      const membersParams: any[] = [];
+
+      // Filter by Divisi if available
+      if (profile.divisi_id) {
+        pendingQuery += " AND divisi_id = $1";
+        pendingParams.push(profile.divisi_id);
+
+        realQuery += " AND divisi_id = $1";
+        realParams.push(profile.divisi_id);
+        
+        // For members, we need to join with gang to check divisi
+        membersQuery = `
+          SELECT COUNT(p.id) as count 
+          FROM pemanen p 
+          LEFT JOIN gang g ON p.gang_id = g.id 
+          WHERE p.status_aktif = true AND g.divisi_id = $1
+        `;
+        membersParams.push(profile.divisi_id);
+      }
+
+      const [pendingRes, realRes, membersRes] = await Promise.all([
+        db.query(pendingQuery, pendingParams),
+        db.query(realQuery, realParams),
+        db.query(membersQuery, membersParams)
+      ]);
+
+      setStats({
+        pending: Number(pendingRes.rows[0]?.count || 0),
+        target: 1500, // Mock target for now (should come from RKH)
+        realization: Number(realRes.rows[0]?.total || 0),
+        members: Number(membersRes.rows[0]?.count || 0),
+      });
+
+    } catch (error) {
+      console.error('Error loading mandor stats:', error);
+    } finally {
+      await db.end();
+    }
+  }, [profile]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadStats();
+    setRefreshing(false);
+  }, [loadStats]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [loadStats])
+  );
 
   const quickStats = [
     {
       label: 'Pending Approval',
-      value: '0',
+      value: stats.pending.toString(),
       color: '#f57c00',
       icon: CheckSquare,
     },
     {
       label: 'Target Hari Ini',
-      value: '0',
+      value: stats.target.toString(), // TODO: Fetch from RKH
       color: '#2d5016',
       icon: Target,
     },
     {
       label: 'Realisasi',
-      value: '0%',
+      value: stats.realization.toString(),
       color: '#4a7c23',
       icon: TrendingUp,
     },
     {
       label: 'Anggota Gang',
-      value: '0',
+      value: stats.members.toString(),
       color: '#6ba82e',
       icon: Users,
     },
   ];
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.header}>
         <Text style={styles.greeting}>Selamat Datang,</Text>
         <Text style={styles.name}>{profile?.full_name}</Text>
@@ -58,7 +138,10 @@ export default function MandorDashboard() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Tugas Hari Ini</Text>
 
-        <TouchableOpacity style={styles.taskCard}>
+        <TouchableOpacity 
+          style={styles.taskCard}
+          onPress={() => router.push('/approval')}
+        >
           <View style={styles.taskHeader}>
             <View style={[styles.taskBadge, { backgroundColor: '#f57c00' }]}>
               <Text style={styles.taskBadgeText}>Urgent</Text>
@@ -67,11 +150,16 @@ export default function MandorDashboard() {
           </View>
           <Text style={styles.taskTitle}>Approval Data Panen</Text>
           <Text style={styles.taskDescription}>
-            Validasi fisik buah di lapangan dan approve data dari Krani
+            {stats.pending > 0 
+              ? `Ada ${stats.pending} data panen menunggu validasi`
+              : 'Validasi fisik buah di lapangan dan approve data dari Krani'}
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.taskCard}>
+        <TouchableOpacity 
+          style={styles.taskCard}
+          onPress={() => router.push('/gang-performance' as any)}
+        >
           <View style={styles.taskHeader}>
             <View style={[styles.taskBadge, { backgroundColor: '#2d5016' }]}>
               <Text style={styles.taskBadgeText}>Target</Text>
@@ -80,7 +168,8 @@ export default function MandorDashboard() {
           </View>
           <Text style={styles.taskTitle}>Monitoring Pencapaian Gang</Text>
           <Text style={styles.taskDescription}>
-            Pastikan target janjang harian tercapai sesuai RKH
+            Realisasi: {stats.realization} / {stats.target} Janjang 
+            ({stats.target > 0 ? Math.round((stats.realization / stats.target) * 100) : 0}%)
           </Text>
         </TouchableOpacity>
       </View>

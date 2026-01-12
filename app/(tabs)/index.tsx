@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { FileText, MapPin, AlertCircle, Camera } from 'lucide-react-native';
@@ -16,13 +16,28 @@ export default function KraniPanenDashboard() {
         router.push('/input-panen');
         break;
       case 'foto-tph':
-        console.log('Foto TPH - Coming soon');
+        // Foto TPH sementara diarahkan ke input panen atau coming soon
+        Alert.alert('Info', 'Fitur Foto TPH khusus akan hadir di update berikutnya. Silakan gunakan foto pada Input Panen.');
         break;
       case 'grading':
-        console.log('Grading - Coming soon');
+        Alert.alert(
+          'Info', 
+          'Menu Grading sudah terintegrasi di halaman Input Panen.',
+          [
+            { text: 'Batal', style: 'cancel' },
+            { text: 'Ke Input Panen', onPress: () => router.push('/input-panen') }
+          ]
+        );
         break;
       case 'losses':
-        console.log('Losses - Coming soon');
+        Alert.alert(
+          'Info', 
+          'Menu Losses Monitoring sudah terintegrasi di halaman Input Panen.',
+          [
+            { text: 'Batal', style: 'cancel' },
+            { text: 'Ke Input Panen', onPress: () => router.push('/input-panen') }
+          ]
+        );
         break;
       default:
         console.log(action);

@@ -2,9 +2,9 @@
   "expo": {
     "name": "PENTOL - Pencatatan Online",
     "slug": "pentol-harvest-management",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/lg-aep-cmyk-300dpi.jpg",
     "scheme": "pentol",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -14,7 +14,7 @@
     "android": {
       "package": "com.sawitmanunggal.pentol",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
+        "foregroundImage": "./assets/images/lg-aep-cmyk-300dpi.jpg",
         "backgroundColor": "#ffffff"
       }
     },

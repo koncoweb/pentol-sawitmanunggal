@@ -1,10 +1,190 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@/contexts/AuthContext';
 import { FileText, Truck, ClipboardCheck, AlertTriangle } from 'lucide-react-native';
+import { getDbClient } from '@/lib/db';
 
 export default function KraniBuahDashboard() {
   const { profile } = useAuth();
+  const router = useRouter();
+  const [stats, setStats] = useState({ spbToday: 0, shippedToday: 0, restanToday: 0 });
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    const db = await getDbClient();
+    try {
+      const [spbRes, shippedRes, restanRes] = await Promise.all([
+        db.query(
+          `
+            SELECT COUNT(*)::int AS count
+            FROM spb
+            WHERE tanggal = CURRENT_DATE
+          `
+        ),
+        db.query(
+          `
+            SELECT COUNT(*)::int AS count
+            FROM spb
+            WHERE tanggal = CURRENT_DATE
+              AND status = 'shipped'
+          `
+        ),
+        db.query(
+          `
+            SELECT COUNT(*)::int AS count
+            FROM harvest_records
+            WHERE tanggal = CURRENT_DATE
+              AND status = 'approved'
+              AND spb_id IS NULL
+          `
+        ),
+      ]);
+
+      setStats({
+        spbToday: spbRes.rows?.[0]?.count ?? 0,
+        shippedToday: shippedRes.rows?.[0]?.count ?? 0,
+        restanToday: restanRes.rows?.[0]?.count ?? 0,
+      });
+    } finally {
+      await db.end();
+      setStatsLoading(false);
+    }
+  }, []);
+
+  const showTruckData = useCallback(async () => {
+    const db = await getDbClient();
+    try {
+      const { rows } = await db.query(
+        `
+          SELECT nomor_spb, driver_name, truck_plate, status
+          FROM spb
+          WHERE tanggal = CURRENT_DATE
+          ORDER BY created_at DESC
+          LIMIT 10
+        `
+      );
+
+      if (!rows?.length) {
+        Alert.alert('Data Truk', 'Belum ada SPB hari ini.');
+        return;
+      }
+
+      const message = (rows as any[])
+        .map((r) => `${r.nomor_spb}\n${r.truck_plate} • ${r.driver_name} • ${String(r.status).toUpperCase()}`)
+        .join('\n\n');
+
+      Alert.alert('Data Truk (Hari Ini)', message);
+    } finally {
+      await db.end();
+    }
+  }, []);
+
+  const showRestan = useCallback(async () => {
+    const db = await getDbClient();
+    try {
+      const { rows } = await db.query(
+        `
+          SELECT
+            COALESCE(b.name, '-') AS blok_name,
+            COALESCE(SUM(hr.jumlah_jjg), 0)::int AS total_janjang,
+            COUNT(*)::int AS record_count
+          FROM harvest_records hr
+          LEFT JOIN blok b ON b.id = hr.blok_id
+          WHERE hr.tanggal = CURRENT_DATE
+            AND hr.status = 'approved'
+            AND hr.spb_id IS NULL
+          GROUP BY COALESCE(b.name, '-')
+          ORDER BY total_janjang DESC
+          LIMIT 10
+        `
+      );
+
+      if (!rows?.length) {
+        Alert.alert('Cek Restan', 'Tidak ada restan hari ini.');
+        return;
+      }
+
+      const totalJanjang = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_janjang) || 0), 0);
+      const message = [
+        `Total Restan: ${totalJanjang} JJG`,
+        '',
+        ...(rows as any[]).map((r) => `• ${r.blok_name}: ${r.total_janjang} JJG (${r.record_count} data)`),
+      ].join('\n');
+
+      Alert.alert('Cek Restan (Hari Ini)', message);
+    } finally {
+      await db.end();
+    }
+  }, []);
+
+  const showValidateLoad = useCallback(async () => {
+    const db = await getDbClient();
+    try {
+      const { rows } = await db.query(
+        `
+          SELECT
+            COALESCE(b.name, '-') AS blok_name,
+            COALESCE(SUM(hr.jumlah_jjg), 0)::int AS total_janjang,
+            COALESCE(SUM(hr.hasil_panen_bjd), 0)::numeric AS total_kg
+          FROM harvest_records hr
+          LEFT JOIN blok b ON b.id = hr.blok_id
+          WHERE hr.status = 'approved'
+            AND hr.spb_id IS NULL
+            AND hr.tanggal = CURRENT_DATE
+          GROUP BY COALESCE(b.name, '-')
+          ORDER BY total_janjang DESC
+        `
+      );
+
+      if (!rows?.length) {
+        Alert.alert('Validasi Muatan', 'Tidak ada data approved yang siap dimuat hari ini.');
+        return;
+      }
+
+      const totalJanjang = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_janjang) || 0), 0);
+      const totalKg = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_kg) || 0), 0);
+      const message = [
+        `Total Siap Muat: ${totalJanjang} JJG • ${totalKg} Kg`,
+        '',
+        ...(rows as any[]).map((r) => `• ${r.blok_name}: ${r.total_janjang} JJG • ${Number(r.total_kg) || 0} Kg`),
+      ].join('\n');
+
+      Alert.alert('Validasi Muatan (Hari Ini)', message, [
+        { text: 'Tutup', style: 'cancel' },
+        { text: 'Buat SPB', onPress: () => router.push('../create-spb') },
+      ]);
+    } finally {
+      await db.end();
+    }
+  }, [router]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadStats();
+    }, [loadStats])
+  );
+
+  const handleMenuAction = (action: string) => {
+    switch (action) {
+      case 'create-spb':
+        router.push('../create-spb');
+        break;
+      case 'truck-data':
+        void showTruckData();
+        break;
+      case 'validate-load':
+        void showValidateLoad();
+        break;
+      case 'check-restan':
+        void showRestan();
+        break;
+      default:
+        console.log(action);
+    }
+  };
 
   const menuItems = [
     {
@@ -53,15 +233,15 @@ export default function KraniBuahDashboard() {
 
       <View style={styles.statsContainer}>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>0</Text>
+          <Text style={styles.statValue}>{statsLoading ? '-' : stats.spbToday}</Text>
           <Text style={styles.statLabel}>SPB Hari Ini</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>0</Text>
+          <Text style={styles.statValue}>{statsLoading ? '-' : stats.shippedToday}</Text>
           <Text style={styles.statLabel}>Truk Terkirim</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>0</Text>
+          <Text style={styles.statValue}>{statsLoading ? '-' : stats.restanToday}</Text>
           <Text style={styles.statLabel}>Restan</Text>
         </View>
       </View>
@@ -72,7 +252,7 @@ export default function KraniBuahDashboard() {
           <TouchableOpacity
             key={item.id}
             style={styles.menuItem}
-            onPress={() => console.log(item.action)}
+            onPress={() => handleMenuAction(item.action)}
           >
             <View style={[styles.iconContainer, { backgroundColor: item.color }]}>
               <item.icon size={24} color="#fff" />

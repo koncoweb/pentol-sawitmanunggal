@@ -226,7 +226,7 @@ export default function SetupUsersScreen() {
       <View style={styles.infoBox}>
         <Text style={styles.infoTitle}>Catatan:</Text>
         <Text style={styles.infoText}>
-          1. Klik "Buat Users" untuk create user di Neon Auth dan Profile{'\n'}
+          1. Klik Buat Users untuk create user di Neon Auth dan Profile{'\n'}
           2. Jika user sudah ada di Auth tapi tidak di Profile, gunakan tombol 2{'\n'}
         </Text>
       </View>
