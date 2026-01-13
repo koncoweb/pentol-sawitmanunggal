@@ -5,6 +5,11 @@
     "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/lg-aep-cmyk-300dpi.jpg",
+    "splash": {
+      "image": "./assets/images/lg-aep-cmyk-300dpi copy.jpg",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "scheme": "pentol",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
