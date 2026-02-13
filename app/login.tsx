@@ -15,16 +15,18 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useTranslation } from 'react-i18next';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
+  const { t } = useTranslation();
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Mohon isi email dan password');
+      Alert.alert(t('common.error'), t('auth.error.missingCredentials'));
       return;
     }
 
@@ -33,7 +35,7 @@ export default function LoginScreen() {
       await signIn(email, password);
       router.replace('/(tabs)');
     } catch (error: any) {
-      Alert.alert('Login Gagal', error.message || 'Terjadi kesalahan saat login');
+      Alert.alert(t('auth.error.loginFailed'), error.message || t('auth.error.generic'));
     } finally {
       setLoading(false);
     }
@@ -55,19 +57,20 @@ export default function LoginScreen() {
             style={styles.logoImage}
             resizeMode="contain"
           />
+          <Text style={styles.companyName}>AEP NUSANTARA PLANTATIONS Tbk.</Text>
           <Text style={styles.logo}>PENTOL</Text>
-          <Text style={styles.logoFull}>Pencatatan Online</Text>
-          <Text style={styles.subtitle}>Harvest Management System</Text>
+          <Text style={styles.logoFull}>{t('common.onlineRecording')}</Text>
+          <Text style={styles.subtitle}>{t('common.harvestSystem')}</Text>
         </View>
 
         <View style={styles.formContainer}>
-          <Text style={styles.title}>Masuk</Text>
+          <Text style={styles.title}>{t('auth.loginTitle')}</Text>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>{t('auth.email')}</Text>
             <TextInput
               style={styles.input}
-              placeholder="nama@email.com"
+              placeholder={t('auth.emailPlaceholder')}
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -77,16 +80,23 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
+            <Text style={styles.label}>{t('auth.password')}</Text>
             <TextInput
               style={styles.input}
-              placeholder="Masukkan password"
+              placeholder={t('auth.passwordPlaceholder')}
               value={password}
               onChangeText={setPassword}
               secureTextEntry
               editable={!loading}
             />
           </View>
+
+          <TouchableOpacity 
+            style={styles.forgotPasswordContainer}
+            onPress={() => router.push('/forgot-password')}
+          >
+            <Text style={styles.forgotPasswordText}>{t('auth.forgotPassword')}</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
@@ -96,16 +106,16 @@ export default function LoginScreen() {
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.buttonText}>Masuk</Text>
+              <Text style={styles.buttonText}>{t('auth.loginButton')}</Text>
             )}
           </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
           <TouchableOpacity onPress={() => router.push('/setup-users')}>
-            <Text style={styles.setupLink}>Setup Dummy Users untuk Testing</Text>
+            <Text style={styles.setupLink}>{t('auth.setupDummyUsers')}</Text>
           </TouchableOpacity>
-          <Text style={styles.footerText}>PENTOL v1.0</Text>
+          <Text style={styles.footerText}>PENTOL v1.0 </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -129,9 +139,17 @@ const styles = StyleSheet.create({
   logoImage: {
     width: 120,
     height: 120,
-    marginBottom: 20,
+    marginBottom: 12,
     borderRadius: 12,
     backgroundColor: '#fff',
+  },
+  companyName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#2d5016',
+    marginBottom: 16,
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
   logo: {
     fontSize: 36,
@@ -186,6 +204,15 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     backgroundColor: '#fff',
+  },
+  forgotPasswordContainer: {
+    alignItems: 'flex-end',
+    marginBottom: 20,
+  },
+  forgotPasswordText: {
+    color: '#2d5016',
+    fontSize: 14,
+    fontWeight: '600',
   },
   button: {
     backgroundColor: '#2d5016',

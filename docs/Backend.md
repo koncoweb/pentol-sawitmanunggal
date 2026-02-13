@@ -2,39 +2,33 @@
 
 ## Overview
 
-Backend aplikasi **PENTOL (Pencatatan Online)** - Harvest Management System menggunakan Supabase sebagai Backend-as-a-Service (BaaS) yang menyediakan:
-- Authentication
-- Database (PostgreSQL)
-- Row Level Security (RLS)
-- Real-time subscriptions
-- Storage (untuk future development)
-- Edge Functions (untuk future development)
+Backend aplikasi **PENTOL (Pencatatan Online)** - Harvest Management System menggunakan arsitektur serverless dengan komponen utama:
+- **Database**: Neon Database (PostgreSQL)
+- **Authentication**: Better Auth
+- **Data Access**: Neon Serverless Driver (HTTP-based)
+- **Offline Sync**: Custom synchronization logic antara SQLite (Mobile) dan Neon (Server).
 
 ## Authentication
 
 ### Provider
-Supabase Auth dengan email/password authentication.
+Menggunakan **Better Auth** untuk manajemen user, sesi, dan keamanan.
 
 ### Configuration
-
-**File:** `lib/supabase.ts`
+**File:** `lib/auth-client.ts`
 
 ```typescript
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY
+import { createAuthClient } from "better-auth/react"
+
+export const authClient = createAuthClient({
+    baseURL: process.env.EXPO_PUBLIC_AUTH_URL
+})
 ```
-
-### Storage Adapter
-
-Menggunakan custom adapter untuk persistent storage:
-- **Web**: localStorage
-- **Native**: expo-secure-store
 
 ### Auth Methods
 
 #### Sign In
 ```typescript
-await supabase.auth.signInWithPassword({
+await authClient.signIn.email({
   email: string,
   password: string
 })
@@ -42,95 +36,69 @@ await supabase.auth.signInWithPassword({
 
 #### Sign Out
 ```typescript
-await supabase.auth.signOut()
-```
-
-#### Get Session
-```typescript
-const { data: { session } } = await supabase.auth.getSession()
-```
-
-#### Auth State Listener
-```typescript
-supabase.auth.onAuthStateChange((event, session) => {
-  // Handle auth state changes
-})
+await authClient.signOut()
 ```
 
 ## Database Client
 
-### Supabase Client Setup
+### Neon Client Setup
 
-**File:** `lib/supabase.ts`
+**File:** `lib/db.ts`
 
-Client dikonfigurasi dengan:
-- Auto refresh token: enabled
-- Persist session: enabled
-- Detect session in URL: disabled (karena mobile app)
-- Custom headers: 'x-client-info' untuk tracking
-- Realtime: throttled ke 2 events per second untuk efisiensi
-
-### Performance Optimizations
-
-Untuk meningkatkan performa loading aplikasi, telah diterapkan beberapa optimasi:
-
-#### 1. Query Optimization
-- **Select Specific Columns**: Hanya mengambil kolom yang dibutuhkan
-  ```typescript
-  .select('id, full_name, email, role, divisi_id, gang_id')
-  ```
-- **Limit Results**: Membatasi jumlah data yang diambil
-  ```typescript
-  .limit(100)
-  ```
-- **Parallel Queries**: Menggunakan Promise.all() untuk query paralel
-  ```typescript
-  const [gangResult, blokResult, pemanenResult, tphResult] = await Promise.all([...])
-  ```
-
-#### 2. Connection Optimization
-- Mengurangi jumlah round-trip ke database
-- Timeout protection untuk mencegah hanging (10 detik timeout)
-- Lazy loading: Data hanya dimuat saat dibutuhkan
-
-#### 3. Data Loading Strategy
-- **Initial Load**: Hanya load data divisi list
-- **On-Demand**: Load data spesifik divisi setelah dipilih
-- **Avoid Double Loading**: Menggunakan useEffect dengan dependency yang tepat
-
-### Type Safety
-
-Database types sudah didefinisikan untuk TypeScript:
+Client dikonfigurasi menggunakan `@neondatabase/serverless` untuk koneksi PostgreSQL via HTTP/WebSockets yang efisien untuk lingkungan mobile/web.
 
 ```typescript
-export type Database = {
-  public: {
-    Tables: {
-      profiles: { ... },
-      divisi: { ... },
-      gang: { ... }
-    }
-  }
-}
+import { neonConfig, Pool } from '@neondatabase/serverless';
+
+export const getDbClient = async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  return pool;
+};
 ```
 
-### Query Examples
+### Data Storage Strategy
 
-#### Get User Profile
-```typescript
-const { data, error } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('id', userId)
-  .maybeSingle()
-```
+#### 1. Master Data
+Data master (Divisi, Blok, Pemanen, dll) disimpan di Neon dan disinkronkan ke SQLite lokal untuk penggunaan offline.
 
-#### Get Divisi List
-```typescript
-const { data, error } = await supabase
-  .from('divisi')
-  .select('*')
-```
+#### 2. Harvest Records
+Data transaksi panen yang dikirim dari mobile akan disimpan di tabel `harvest_records`.
+
+#### 3. Photo Storage (Database-based)
+Foto hasil panen disimpan langsung di database dalam tabel `harvest_photos` menggunakan kolom `TEXT` (Base64) atau `BYTEA`.
+- **Table**: `harvest_photos`
+- **Columns**: `id` (UUID), `photo_data` (TEXT/Base64), `mime_type` (TEXT), `created_at` (TIMESTAMP).
+
+## Offline Synchronization Logic
+
+Backend mendukung sinkronisasi dua arah:
+
+### 1. Downward Sync (Master Data)
+Mobile menarik data terbaru dari tabel master untuk memastikan operasional lapangan tetap berjalan meskipun tanpa koneksi internet.
+
+Tabel yang disinkronkan:
+- `divisi`: Data afdeling/divisi.
+- `gang`: Data kemandoran.
+- `blok`: Data blok kebun beserta tahun tanam.
+- `pemanen`: Data karyawan pemanen (operator).
+- `tph`: Data Tempat Pengumpulan Hasil.
+
+### 2. Upward Sync (Transaction Data)
+Proses pengiriman data panen dari mobile ke server mengikuti alur:
+1. **Photo Upload**: Foto panen diubah menjadi Base64 dan di-insert ke tabel `harvest_photos`.
+2. **ID Retrieval**: Server mengembalikan UUID untuk foto tersebut.
+3. **Record Insertion**: Data transaksi panen di-insert ke `harvest_records` dengan `foto_url` menggunakan format `db-photo://{UUID}`.
+4. **Local Update**: Status di SQLite lokal diubah menjadi `synced`.
+
+## Security & RLS (Row Level Security)
+
+Keamanan data di Neon Database dikelola menggunakan PostgreSQL RLS:
+
+- **Authenticated Users**: Hanya user yang terautentikasi via Better Auth yang dapat mengakses data.
+- **Role-based Access**:
+    - `krani_panen`: Hanya dapat melihat dan menginput data di divisi mereka sendiri.
+    - `mandor`: Dapat melihat dan menyetujui data dari gang/kemandoran mereka.
+    - `administrator`: Akses penuh ke seluruh data.
 
 ## Report Service & Export
 
@@ -159,20 +127,22 @@ Mengambil data harvest records dari database dengan filter.
 **Returns:** `Promise<HarvestRecordRaw[]>`
 
 **Query:**
-```typescript
-supabase
-  .from('harvest_records')
-  .select(`
-    id, tanggal, created_at, divisi_name, gang_name,
-    blok_names, pemanen_details, rotasi, nomor_panen,
-    hasil_panen_jjg, nomor_tph, bjr, jumlah_brondolan_kg,
-    buah_masak, buah_mentah, buah_mengkal, overripe,
-    abnormal, buah_busuk, tangkai_panjang, jangkos,
-    keterangan, foto_url, created_by_name
-  `)
-  .gte('tanggal', startDate)
-  .lte('tanggal', endDate)
-  .order('tanggal', { ascending: false })
+```sql
+SELECT
+  hr.id,
+  hr.tanggal,
+  d.name as divisi_name,
+  g.name as gang_name,
+  b.name as blok_name,
+  p.name as pemanen_name,
+  hr.hasil_panen_jjg,
+  hr.foto_url
+FROM harvest_records hr
+LEFT JOIN divisi d ON hr.divisi_id = d.id
+LEFT JOIN blok b ON hr.blok_id = b.id
+LEFT JOIN pemanen p ON hr.pemanen_id = p.id
+LEFT JOIN gang g ON p.gang_id = g.id
+WHERE hr.tanggal >= $1 AND hr.tanggal <= $2
 ```
 
 ##### `transformToExportFormat(records: HarvestRecordRaw[])`
@@ -256,12 +226,10 @@ User clicks Export
 ExportModal Component
     ↓
 Select format (Excel/PDF)
-Select scope (Divisi/Estate)
-Select date range
     ↓
 fetchReportData(filter)
     ↓
-Query Supabase with filters
+Query Neon Database via lib/db.ts
     ↓
 transformToExportFormat(rawData)
     ↓
@@ -270,59 +238,10 @@ exportToExcel() or exportToPDF()
 File downloaded to user's device
 ```
 
-### Type Definitions
-
-**ExportRecord:**
-```typescript
-type ExportRecord = {
-  tanggal: string;
-  waktu: string;
-  krani: string;
-  divisi: string;
-  gang: string;
-  blok: string;
-  op: string;
-  rotasi: number;
-  nama_pemanen: string;
-  nomor_panen: number;
-  hasil_panen_jjg: number;
-  nomor_tph: string;
-  bjr: number;
-  brondolan_kg: number;
-  buah_masak: number;
-  buah_mentah: number;
-  buah_mengkal: number;
-  overripe: number;
-  abnormal: number;
-  buah_busuk: number;
-  tangkai_panjang: number;
-  jangkos: number;
-  keterangan: string;
-};
-```
-
-**ReportFilter:**
-```typescript
-type ReportFilter = {
-  startDate: Date;
-  endDate: Date;
-  divisiId?: string;
-  gangId?: string;
-};
-```
-
 ## API Routes
 
 ### Current Status
-Belum ada API routes custom. Semua operasi menggunakan Supabase client-side queries dengan RLS protection.
-
-### Future API Routes
-Untuk fase development selanjutnya, akan ditambahkan:
-- `/api/harvest/submit` - Submit data panen
-- `/api/harvest/approve` - Approve data panen
-- `/api/spb/generate` - Generate SPB
-- `/api/reports/daily` - Generate daily reports
-- `/api/reports/monthly` - Generate monthly reports
+Saat ini aplikasi tidak menggunakan API routes custom (Express/Next.js). Semua operasi database dilakukan langsung dari client menggunakan `@neondatabase/serverless` yang mendukung koneksi PostgreSQL via HTTP/WebSockets. Keamanan dikelola melalui PostgreSQL RLS (Row Level Security).
 
 ## Data Access Patterns
 
@@ -345,6 +264,11 @@ Untuk fase development selanjutnya, akan ditambahkan:
 - UPDATE: User assignments in divisi
 - VIEW: KPI reports for divisi
 
+#### Senior Asisten
+- SELECT: All data in own rayon (multiple divisi)
+- VIEW: KPI reports for rayon
+- EXPORT: Reports (Rayon level)
+
 #### Estate Manager
 - SELECT: All data in estate (all divisi)
 - VIEW: Comprehensive reports
@@ -355,59 +279,52 @@ Untuk fase development selanjutnya, akan ditambahkan:
 - VIEW: Regional analytics
 - EXPORT: Regional reports
 
+#### General Manager
+- SELECT: All company data
+- VIEW: Corporate analytics
+- EXPORT: Corporate reports
+
+#### Administrator
+- SELECT: auth.users, profiles
+- INSERT/UPDATE/DELETE: User management
+- VIEW: System logs
+
 ## Security Implementation
 
 ### Row Level Security (RLS)
 
-Semua query otomatis di-filter oleh RLS policies:
+Keamanan data di Neon dikelola langsung di level database menggunakan PostgreSQL RLS. Setiap session dari Better Auth membawa ID user yang divalidasi oleh database.
 
 ```sql
--- Example: User hanya bisa lihat profil sendiri
-CREATE POLICY "Users can view own profile"
-  ON profiles FOR SELECT
-  TO authenticated
-  USING (auth.uid() = id);
+-- Example: User hanya bisa melihat data di divisinya
+CREATE POLICY "Users can view records in their division"
+  ON harvest_records FOR SELECT
+  USING (divisi_id IN (
+    SELECT divisi_id FROM profiles WHERE id = auth.uid()
+  ));
 ```
 
 ### Authentication Check
 
-Setiap request otomatis include JWT token:
-```typescript
-// Token otomatis disertakan dalam header
-Authorization: Bearer <jwt_token>
-```
-
-### Rate Limiting
-
-Default Supabase rate limits:
-- Anonymous requests: 300 requests/hour
-- Authenticated requests: 3000 requests/hour
+Setiap request ke Neon via serverless driver dapat dikonfigurasi untuk menyertakan token autentikasi jika menggunakan proxy atau middleware, namun dalam setup saat ini, Better Auth mengelola session di sisi client dan server.
 
 ## Error Handling
 
 ### Common Errors
 
+#### Database Errors
+```typescript
+{
+  message: "relation 'table' does not exist",
+  code: "42P01"
+}
+```
+
 #### Authentication Errors
 ```typescript
 {
-  message: "Invalid login credentials",
-  status: 400
-}
-```
-
-#### Permission Errors (RLS)
-```typescript
-{
-  message: "new row violates row-level security policy",
-  status: 403
-}
-```
-
-#### Not Found
-```typescript
-{
-  data: null,
-  error: null  // using maybeSingle()
+  message: "Invalid email or password",
+  status: 401
 }
 ```
 
@@ -415,15 +332,12 @@ Default Supabase rate limits:
 
 ```typescript
 try {
-  const { data, error } = await supabase
-    .from('table')
-    .select('*')
-
-  if (error) throw error
-  return data
+  const client = await getDbClient();
+  const { rows } = await client.query('SELECT * FROM table');
+  return rows;
 } catch (error) {
-  console.error('Error:', error)
-  // Handle error appropriately
+  console.error('Database Error:', error);
+  throw error;
 }
 ```
 
@@ -432,34 +346,21 @@ try {
 ### Query Optimization
 
 1. **Select only needed columns**
-```typescript
-.select('id, name, email')  // ✅ Good
-.select('*')  // ❌ Avoid when possible
+```sql
+SELECT id, name FROM pemanen; -- ✅ Good
+SELECT * FROM pemanen;        -- ❌ Avoid
 ```
 
-2. **Use indexes** - Database sudah di-index untuk foreign keys
-
-3. **Pagination** (future)
-```typescript
-.range(0, 9)  // First 10 items
-```
-
-### Caching Strategy
-
-Current: No caching (semua real-time)
-
-Future considerations:
-- Cache reference data (divisi, gang) di client
-- Real-time subscription untuk critical data
-- Background sync untuk reports
+2. **Use Indexes**
+Pastikan kolom yang sering digunakan dalam `WHERE` atau `JOIN` (seperti `divisi_id`, `tanggal`) memiliki index.
 
 ## Environment Variables
 
 ### Required Variables
 
 ```env
-EXPO_PUBLIC_SUPABASE_URL=https://[project-id].supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=[anon-key]
+DATABASE_URL=postgres://user:pass@host/db  # Neon Connection String
+EXPO_PUBLIC_AUTH_URL=http://localhost:3000 # Better Auth URL
 ```
 
 ### Security Notes
@@ -471,51 +372,33 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=[anon-key]
 ## Logging & Monitoring
 
 ### Current Status
-- Console logging untuk development
-- Error tracking belum diimplementasikan
-
-### Future Implementation
-- Sentry untuk error tracking
-- Supabase dashboard untuk monitoring queries
-- Custom analytics untuk business metrics
+- Console logging untuk sinkronisasi offline.
+- Neon Dashboard untuk monitoring query performance dan autoscaling.
 
 ## Database Migrations
 
 ### Management
-Semua migrations dikelola melalui Supabase Migration Tool via MCP.
-
-### Migration Process
-1. Buat migration dengan `mcp__supabase__apply_migration`
-2. Migration otomatis ter-apply ke database
-3. Schema changes langsung tersedia
+Migrations dikelola menggunakan SQL scripts yang dijalankan di Neon Console atau via tools migrasi database.
 
 ### Best Practices
-- ✅ Gunakan IF NOT EXISTS untuk idempotency
-- ✅ Include detailed markdown documentation
-- ✅ Test dengan sample data
-- ❌ NEVER gunakan DROP table di production
-- ✅ Gunakan ALTER untuk modify existing tables
+- ✅ Gunakan `IF NOT EXISTS` untuk idempotency.
+- ✅ Lakukan backup sebelum menjalankan migrasi besar.
+- ✅ Gunakan `ALTER TABLE` untuk perubahan skema di production.
 
 ## Testing
 
 ### Current Status
-Manual testing through UI
-
-### Future Testing Strategy
-- Unit tests untuk Supabase client functions
-- Integration tests untuk auth flow
-- E2E tests untuk critical paths
-- Load testing untuk performance validation
+- Manual testing melalui mobile app.
+- Sinkronisasi diuji dengan mensimulasikan kondisi offline/online.
 
 ## Deployment
 
-### Supabase Project
-- Environment: Production
-- Region: Auto-selected by Supabase
-- Database: PostgreSQL 15
-- Connection pooling: Enabled
+### Neon Project
+- **Environment**: Production.
+- **Region**: Singapore (aws-ap-southeast-1) untuk low latency.
+- **Autoscaling**: Enabled (0.25 - 1 CU).
 
 ### Updates & Rollback
 - Schema changes: Applied via migrations
-- Rollback: Manual via Supabase dashboard
+- Rollback: Manual via Neon Dashboard
 - Zero-downtime deployments untuk RLS policy updates

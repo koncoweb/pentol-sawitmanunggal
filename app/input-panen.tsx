@@ -10,12 +10,16 @@ import {
   ActivityIndicator,
   Image,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDbClient } from '@/lib/db';
-import { ChevronLeft, Save, Camera, X, Check, Calendar } from 'lucide-react-native';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { useOfflineData, runCommand, syncHarvestQueue, syncMasterData } from '@/lib/offline';
+import { ChevronLeft, Save, X, Check, Calendar, Image as ImageIcon, WifiOff } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Directory, File, Paths } from 'expo-file-system';
+import { useTranslation } from 'react-i18next';
 import Dropdown from '@/components/Dropdown';
 import MultiSelectDropdown from '@/components/MultiSelectDropdown';
 import EditableDropdown from '@/components/EditableDropdown';
@@ -35,6 +39,7 @@ interface Pemanen {
   id: string;
   operator_code: string;
   name: string;
+  gang_id: string;
 }
 
 interface TPH {
@@ -47,12 +52,38 @@ interface Gang {
   name: string;
 }
 
+const getFormattedDate = (dateString: string) => {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  const dateStr = date.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const timeStr = new Date().toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${dateStr}, Waktu: ${timeStr}`;
+};
+
 export default function InputPanenScreen() {
+  const { t } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
-  const { profile } = useAuth();
+  const { profile, session, user, loading: authLoading } = useAuth();
+  const { isOffline, getDivisi, getGang, getBlok, getPemanen, getTPH } = useOfflineData();
   const [loading, setLoading] = useState(false);
   const [isFetchingData, setIsFetchingData] = useState(false); // State for loading indicator
+  const scrollViewRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    // Attempt sync on mount
+    syncMasterData().catch(err => console.error('Background sync master failed:', err));
+    syncHarvestQueue().catch(err => console.error('Background sync queue failed:', err));
+  }, []);
 
   const dataCache = useRef<Record<string, {
     gang: Gang[],
@@ -66,11 +97,11 @@ export default function InputPanenScreen() {
   const [tphList, setTphList] = useState<TPH[]>([]);
   const [gangList, setGangList] = useState<Gang[]>([]);
 
-  const cameraRef = useRef<CameraView>(null);
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [showCamera, setShowCamera] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -79,11 +110,13 @@ export default function InputPanenScreen() {
     tahun_tanam: '',
     gang_id: '',
     blok_ids: [] as string[],
-    pemanen_ids: [] as string[],
+    blok_name: '', // Added for EditableDropdown
+    pemanen_id: '',
     tph_id: '',
     rotasi: '',
     nomor_panen: '',
     hasil_panen_bjd: '',
+    jumlah_brondolan_kg: '',
     bjr: '',
     buah_masak: '',
     buah_mentah: '',
@@ -97,14 +130,18 @@ export default function InputPanenScreen() {
   });
 
   useEffect(() => {
-    console.log('InputPanenScreen mounted, profile:', profile);
+    console.log('InputPanenScreen mounted v2 (Neon DB Upload Active)', profile);
     loadDivisiList();
 
     // Load data divisi user saat mount
     const divisiId = formData.divisi_id || profile?.divisi_id;
     if (divisiId) {
       if (!formData.divisi_id && profile?.divisi_id) {
-        setFormData(prev => ({ ...prev, divisi_id: profile?.divisi_id || '' }));
+        setFormData(prev => ({ 
+          ...prev, 
+          divisi_id: profile.divisi_id!,
+          gang_id: profile.gang_id || prev.gang_id 
+        }));
       }
       loadDivisiData(divisiId);
     }
@@ -119,11 +156,8 @@ export default function InputPanenScreen() {
 
   const loadDivisiList = async () => {
     try {
-      const db = await getDbClient();
-      const { rows } = await db.query('SELECT id, name, estate_name FROM divisi ORDER BY name LIMIT 20');
-      await db.end();
-
-      console.log('Loaded divisi:', rows.length);
+      const rows = await getDivisi();
+      console.log('Loaded divisi:', rows?.length);
       setDivisiList(rows as any[]);
     } catch (error) {
       console.error('Error loading divisi list:', error);
@@ -147,39 +181,23 @@ export default function InputPanenScreen() {
     setIsFetchingData(true);
     try {
       console.log('Loading data for divisi:', divisiId);
-      const db = await getDbClient();
-
-      // Load semua data secara parallel untuk kecepatan
-      const [gangResult, blokResult, pemanenResult, tphResult] = await Promise.all([
-        db.query('SELECT id, name FROM gang WHERE divisi_id = $1 ORDER BY name LIMIT 50', [divisiId]),
-        db.query('SELECT id, name FROM blok WHERE divisi_id = $1 ORDER BY name LIMIT 100', [divisiId]),
-        db.query(`
-          SELECT p.id, p.nik as operator_code, p.name 
-          FROM pemanen p 
-          JOIN gang g ON p.gang_id = g.id 
-          WHERE g.divisi_id = $1 AND p.status_aktif = true 
-          ORDER BY p.name LIMIT 100
-        `, [divisiId]),
-        db.query(`
-          SELECT t.id, t.name as nomor_tph 
-          FROM tph t 
-          JOIN blok b ON t.blok_id = b.id 
-          WHERE b.divisi_id = $1 
-          ORDER BY t.name LIMIT 100
-        `, [divisiId])
+      
+      const [gangList, blokList, pemanenList, tphList] = await Promise.all([
+        getGang(divisiId),
+        getBlok(divisiId),
+        getPemanen(divisiId),
+        getTPH(divisiId)
       ]);
 
-      await db.end();
+      const newGangList = (gangList || []) as any[];
+      const newBlokList = (blokList || []) as any[];
+      const newPemanenList = (pemanenList || []) as any[];
+      const newTphList = (tphList || []) as any[];
 
-      const newGangList = (gangResult?.rows || []) as any[];
-      const newBlokList = (blokResult?.rows || []) as any[];
-      const newPemanenList = (pemanenResult?.rows || []) as any[];
-      const newTphList = (tphResult?.rows || []) as any[];
-
-      if (gangResult) setGangList(newGangList);
-      if (blokResult) setBlokList(newBlokList);
-      if (pemanenResult) setPemanenList(newPemanenList);
-      if (tphResult) setTphList(newTphList);
+      setGangList(newGangList);
+      setBlokList(newBlokList);
+      setPemanenList(newPemanenList);
+      setTphList(newTphList);
 
       // Save to cache
       dataCache.current[divisiId] = {
@@ -190,10 +208,10 @@ export default function InputPanenScreen() {
       };
 
       console.log('Loaded data:', {
-        gang: gangResult?.rows?.length,
-        blok: blokResult?.rows?.length,
-        pemanen: pemanenResult?.rows?.length,
-        tph: tphResult?.rows?.length,
+        gang: newGangList.length,
+        blok: newBlokList.length,
+        pemanen: newPemanenList.length,
+        tph: newTphList.length,
       });
     } catch (error) {
       console.error('Error loading divisi data:', error);
@@ -212,23 +230,35 @@ export default function InputPanenScreen() {
 
   const handleSubmit = async () => {
     if (!formData.divisi_id) {
-      Alert.alert('Error', 'Mohon pilih Divisi');
+      Alert.alert(t('common.error'), t('input.error.selectDivision'));
       return;
     }
-    if (formData.blok_ids.length === 0) {
-      Alert.alert('Error', 'Mohon pilih Blok');
+    
+    // Validate Blok Name and resolve to ID
+    if (!formData.blok_name) {
+      Alert.alert(t('common.error'), t('input.error.selectBlock'));
       return;
     }
-    if (formData.pemanen_ids.length === 0) {
-      Alert.alert('Error', 'Mohon pilih Pemanen');
+    
+    const selectedBlok = blokList.find(b => b.name === formData.blok_name);
+    if (!selectedBlok) {
+      Alert.alert(t('common.error'), t('input.error.invalidBlock'));
+      return;
+    }
+    
+    // Set blok_ids for the loop
+    const finalBlokIds = [selectedBlok.id];
+
+    if (!formData.pemanen_id) {
+      Alert.alert(t('common.error'), t('input.error.selectHarvester'));
       return;
     }
     if (!formData.rotasi) {
-      Alert.alert('Error', 'Mohon isi Rotasi');
+      Alert.alert(t('common.error'), t('input.error.fillRotation'));
       return;
     }
     if (!formData.hasil_panen_bjd) {
-      Alert.alert('Error', 'Mohon isi Hasil Panen (BJD)');
+      Alert.alert(t('common.error'), t('input.error.fillYield'));
       return;
     }
 
@@ -236,8 +266,83 @@ export default function InputPanenScreen() {
     console.log('Submitting harvest data...', formData);
 
     try {
-      if (!profile?.id) {
-        throw new Error('User session not found');
+      const userId = profile?.id || user?.id || session?.userId;
+      if (!userId) {
+        throw new Error(t('input.error.sessionLost'));
+      }
+
+      if (isOffline) {
+        const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
+        const bjr = parseInt(formData.bjr) || 0;
+        const bjd = jjg * bjr;
+        
+        let localPhotoPath = null;
+        if (photoUri) {
+            const filename = photoUri.split('/').pop();
+            const harvestDir = new Directory(Paths.document, 'harvest_photos');
+            if (!harvestDir.exists) {
+                harvestDir.create({ intermediates: true });
+            }
+            
+            const sourceFile = new File(photoUri);
+            const destFile = new File(harvestDir, filename || 'temp.jpg');
+            sourceFile.copy(destFile);
+            localPhotoPath = destFile.uri;
+        }
+
+        for (const blokId of finalBlokIds) {
+             await runCommand(`
+                 INSERT INTO harvest_records_queue (
+                     tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
+                     hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
+                     overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
+                     keterangan, status, created_by, nomor_panen, jumlah_jjg,
+                     foto_path, jumlah_brondolan_kg
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             `, [
+                 formData.tanggal,
+                 formData.divisi_id,
+                 blokId,
+                 formData.pemanen_id,
+                 formData.tph_id || null,
+                 parseInt(formData.rotasi),
+                 bjd,
+                 bjr,
+                 parseInt(formData.buah_masak) || 0,
+                 parseInt(formData.buah_mentah) || 0,
+                 parseInt(formData.buah_mengkal) || 0,
+                 parseInt(formData.overripe) || 0,
+                 parseInt(formData.abnormal) || 0,
+                 parseInt(formData.buah_busuk) || 0,
+                 parseInt(formData.tangkai_panjang) || 0,
+                 parseInt(formData.jangkos) || 0,
+                 formData.keterangan || null,
+                 'pending',
+                 userId,
+                 formData.nomor_panen,
+                 jjg,
+                 localPhotoPath,
+                 parseFloat(formData.jumlah_brondolan_kg) || 0
+             ]);
+        }
+        
+        setSuccessMessage(`${finalBlokIds.length} ${t('input.success.offlineSaved')}`);
+        setShowSuccessModal(true);
+        setLoading(false);
+        return;
+      }
+
+      let uploadedPhotoUrl = null;
+      if (photoUri) {
+        setUploadingPhoto(true);
+        uploadedPhotoUrl = await uploadPhotoToStorage(photoUri);
+        setUploadingPhoto(false);
+        
+        if (!uploadedPhotoUrl) {
+            // Continue without photo if upload fails, but warn user? 
+            // Or maybe just log it. For now let's just log.
+            console.warn('Photo upload failed or returned null');
+        }
       }
 
       console.log('Connecting to database...');
@@ -249,27 +354,28 @@ export default function InputPanenScreen() {
       const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
       const bjr = parseInt(formData.bjr) || 0;
       const bjd = jjg * bjr; // Calculate total weight based on JJG * BJR
-      const totalRecords = formData.blok_ids.length * formData.pemanen_ids.length;
+      const totalRecords = finalBlokIds.length;
       let insertedCount = 0;
 
       console.log(`Preparing to insert ${totalRecords} records...`);
 
-      for (const blokId of formData.blok_ids) {
-        for (const pemanenId of formData.pemanen_ids) {
+      for (const blokId of finalBlokIds) {
            await db.query(`
              INSERT INTO harvest_records (
                 tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
                 hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
                 overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
-                keterangan, status, created_by, nomor_panen, jumlah_jjg
+                keterangan, status, created_by, nomor_panen, jumlah_jjg,
+                foto_url, jumlah_brondolan_kg
              ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+                $22, $23
              )
            `, [
              formData.tanggal,
              formData.divisi_id, // Use selected divisi_id, not profile.divisi_id
              blokId,
-             pemanenId,
+             formData.pemanen_id,
              formData.tph_id || null,
              parseInt(formData.rotasi),
              bjd, // Insert calculated weight
@@ -284,33 +390,25 @@ export default function InputPanenScreen() {
              parseInt(formData.jangkos) || 0,
              formData.keterangan || null,
              'submitted',
-             profile.id,
+             userId,
              formData.nomor_panen,
-             jjg // Insert count
+             jjg, // Insert count
+             uploadedPhotoUrl,
+             parseFloat(formData.jumlah_brondolan_kg) || 0
            ]);
            insertedCount++;
-        }
       }
       
       await db.query('COMMIT');
       await db.end();
       console.log(`Successfully inserted ${insertedCount} records`);
 
-      Alert.alert('Berhasil', `${insertedCount} data panen berhasil disimpan ke database`, [
-        {
-          text: 'OK',
-          onPress: () => {
-            if (navigation.canGoBack()) {
-              router.back();
-            } else {
-              router.replace('/(tabs)/mandor');
-            }
-          },
-        },
-      ]);
+      setSuccessMessage(t('input.success.saveSuccess', { count: insertedCount }));
+      setShowSuccessModal(true);
+
     } catch (error: any) {
       console.error('Error saving harvest:', error);
-      Alert.alert('Error', `Gagal menyimpan data: ${error.message || 'Unknown error'}. Cek koneksi internet.`);
+      Alert.alert(t('common.error'), t('input.error.saveFailed', { error: error.message || 'Unknown error' }));
     } finally {
       setLoading(false);
       setUploadingPhoto(false);
@@ -321,25 +419,82 @@ export default function InputPanenScreen() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleOpenCamera = async () => {
+  const handlePickImage = async () => {
+    console.log('handlePickImage triggered');
+    
     if (Platform.OS === 'web') {
-      Alert.alert('Info', 'Fitur kamera tidak tersedia di web. Gunakan aplikasi mobile.');
+      // On Web, Alert.alert with custom buttons is not supported.
+      // We'll default to opening the library which on mobile web usually offers Camera option too.
+      // Or we could use window.confirm but it's limited.
+      // Let's just launch the library for now as it's the standard web behavior.
+      handleLaunchLibrary();
       return;
     }
 
-    if (!cameraPermission) {
-      return;
-    }
+    Alert.alert(
+      t('input.button.uploadPhoto'),
+      t('input.label.pickSource'),
+      [
+        {
+          text: t('input.button.camera'),
+          onPress: handleTakeImage,
+        },
+        {
+          text: t('input.button.gallery'),
+          onPress: handleLaunchLibrary,
+        },
+        {
+          text: t('input.button.cancel'),
+          style: 'cancel',
+        },
+      ]
+    );
+  };
 
-    if (!cameraPermission.granted) {
-      const result = await requestCameraPermission();
-      if (!result.granted) {
-        Alert.alert('Error', 'Izin kamera diperlukan untuk mengambil foto');
+  const handleLaunchLibrary = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled) {
+        setPhotoUri(result.assets[0].uri);
+        setPhotoBase64(result.assets[0].base64 || null);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert(t('common.error'), t('input.error.pickImage'));
+    }
+  };
+
+  const handleTakeImage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert(t('input.error.cameraPermissionDenied'), t('input.error.cameraPermissionRequired'));
         return;
       }
-    }
 
-    setShowCamera(true);
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled) {
+        setPhotoUri(result.assets[0].uri);
+        setPhotoBase64(result.assets[0].base64 || null);
+      }
+    } catch (error) {
+      console.error('Error taking photo:', error);
+      Alert.alert(t('input.error.title'), t('input.error.takeImage'));
+    }
   };
 
   const handleBack = () => {
@@ -350,60 +505,77 @@ export default function InputPanenScreen() {
     }
   };
 
-  const handleTakePhoto = async () => {
-    if (!cameraRef.current) {
-      return;
-    }
-
-    try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.7,
-      });
-
-      if (photo) {
-        setPhotoUri(photo.uri);
-        setShowCamera(false);
-      }
-    } catch (error) {
-      console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Gagal mengambil foto');
-    }
-  };
-
   const handleRemovePhoto = () => {
     setPhotoUri(null);
+    setPhotoBase64(null);
   };
 
   const uploadPhotoToStorage = async (uri: string): Promise<string | null> => {
-    try {
-      // Create form data
-      const formData = new FormData();
-      formData.append('file', {
-        uri,
-        name: `photo-${Date.now()}.jpg`,
-        type: 'image/jpeg',
-      } as any);
+    if (!photoBase64) {
+      console.warn("No base64 data available for upload");
+      // Fallback if base64 missing but uri exists (should not happen with new logic)
+      return null;
+    }
 
-      // Upload via Supabase Storage API
-      // Note: Using standard fetch since we need FormData for React Native
-      // In a real implementation with supabase-js, we would use:
-      // const { data, error } = await supabase.storage.from('harvest-photos').upload(...)
+    try {
+      console.log('Uploading photo to Neon DB...');
+      const db = await getDbClient();
       
-      // Since we don't have the full supabase client setup with storage here, 
-      // we will mock the upload success if in development, or return null
-      console.log('Mock uploading photo:', uri);
+      // Insert into harvest_photos
+      const { rows } = await db.query(`
+        INSERT INTO harvest_photos (photo_data, mime_type)
+        VALUES ($1, $2)
+        RETURNING id
+      `, [photoBase64, 'image/jpeg']);
       
-      // Simulate upload delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await db.end();
+
+      if (rows && rows.length > 0) {
+        const photoId = rows[0].id;
+        console.log('Photo uploaded with ID:', photoId);
+        return `db-photo://${photoId}`;
+      }
       
-      // Return a mock URL for testing since we can't verify storage bucket access
-      // In production, this should be the actual public URL
-      return `https://placeholder.com/harvest-photo-${Date.now()}.jpg`;
-      
+      return null;
     } catch (error) {
       console.error('Error uploading photo:', error);
       return null;
     }
+  };
+
+  const handleModalClose = () => {
+    setShowSuccessModal(false);
+    if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/mandor');
+    }
+  };
+
+  const handleModalNext = () => {
+    setShowSuccessModal(false);
+    setFormData(prev => ({
+      ...prev,
+      blok_ids: [],
+      blok_name: '',
+      pemanen_id: '',
+      nomor_panen: '',
+      hasil_panen_bjd: '',
+      buah_masak: '',
+      buah_mentah: '',
+      buah_mengkal: '',
+      overripe: '',
+      abnormal: '',
+      buah_busuk: '',
+      tangkai_panjang: '',
+      jangkos: '',
+      keterangan: '',
+    }));
+    setPhotoUri(null);
+    setPhotoBase64(null);
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }, 100);
   };
 
   return (
@@ -418,27 +590,33 @@ export default function InputPanenScreen() {
             style={styles.logo}
             resizeMode="contain"
           />
-          <Text style={styles.headerTitle}>Input Panen Sawit</Text>
+          <Text style={styles.headerTitle}>{t('input.title')}</Text>
         </View>
         <View style={styles.headerRight}>
+          {isOffline && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10, backgroundColor: '#e74c3c', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+              <WifiOff size={16} color="#fff" style={{ marginRight: 4 }} />
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{t('input.offline')}</Text>
+            </View>
+          )}
           <Calendar size={24} color="#fff" />
         </View>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView ref={scrollViewRef} style={styles.content} keyboardShouldPersistTaps="handled">
         {isFetchingData && (
           <View style={styles.loadingBanner}>
             <ActivityIndicator size="small" color="#2d5016" />
-            <Text style={styles.loadingText}>Memuat data divisi...</Text>
+            <Text style={styles.loadingText}>{t('input.loading.data')}</Text>
           </View>
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Informasi Umum</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.general')}</Text>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>
-              Tanggal <Text style={styles.required}>*</Text>
+              {t('input.label.date')} <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
               style={styles.input}
@@ -450,21 +628,21 @@ export default function InputPanenScreen() {
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>
-              Nama Krani
+              {t('input.label.krani')}
             </Text>
             <TextInput
               style={styles.input}
               value={profile?.full_name || ''}
               editable={false}
-              placeholder="Nama Krani"
+              placeholder={t('input.label.krani')}
             />
           </View>
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
               <Dropdown
-                label="Divisi"
-                placeholder="Pilih Divisi"
+                label={t('input.label.division')}
+                placeholder={t('input.placeholder.selectDivision')}
                 value={formData.divisi_id}
                 items={divisiList.map((divisi) => ({
                   label: divisi.name,
@@ -481,7 +659,7 @@ export default function InputPanenScreen() {
                     divisi_id: value,
                     gang_id: '',
                     blok_ids: [],
-                    pemanen_ids: [],
+                    pemanen_id: '',
                     tph_id: '',
                   }));
                 }}
@@ -492,8 +670,8 @@ export default function InputPanenScreen() {
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
               <Dropdown
-                label="Tahun Tanam"
-                placeholder="Pilih Tahun"
+                label={t('input.label.plantingYear')}
+                placeholder={t('input.placeholder.selectYear')}
                 value={formData.tahun_tanam}
                 items={[
                   { label: '2010', value: '2010' },
@@ -520,11 +698,11 @@ export default function InputPanenScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Lokasi & Blok</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.locationAndBlock')}</Text>
 
           <Dropdown
-            label="Gang"
-            placeholder="Pilih Gang"
+            label={t('input.label.gang')}
+            placeholder={t('input.placeholder.selectGang')}
             value={formData.gang_id}
             items={gangList.map((gang) => ({
               label: gang.name,
@@ -534,87 +712,70 @@ export default function InputPanenScreen() {
             searchable={gangList.length > 5}
           />
 
-          <MultiSelectDropdown
-            label="Blok"
-            placeholder="Pilih Blok (bisa lebih dari 1)"
-            values={formData.blok_ids}
+          <Dropdown
+            label={t('input.label.block')}
+            placeholder={t('input.placeholder.selectBlock')}
+            value={formData.blok_name}
             items={blokList.map((blok) => ({
               label: blok.name,
-              value: blok.id,
+              value: blok.name,
             }))}
-            onSelect={(values) => updateField('blok_ids', values)}
+            onSelect={(value) => updateField('blok_name', value)}
             required
             searchable={blokList.length > 5}
           />
 
-          <Dropdown
-            label="Nomor Panen"
-            placeholder="Pilih Nomor Panen"
-            value={formData.tph_id}
+          <EditableDropdown
+            label={t('input.label.tphNumber')}
+            placeholder={t('input.placeholder.typeOrSelect')}
+            value={formData.nomor_panen}
             items={tphList.map((tph) => ({
               label: tph.nomor_tph,
-              value: tph.id,
+              value: tph.nomor_tph,
             }))}
-            onSelect={(value) => updateField('tph_id', value)}
-            searchable={tphList.length > 10}
+            onChangeText={(value) => updateField('nomor_panen', value)}
+            keyboardType="number-pad"
           />
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Detail Panen</Text>
-          <Text style={styles.helperText}>
-            Catatan: Jika memilih lebih dari 1 pemanen, hasil panen yang diinput akan dicatat untuk MASING-MASING pemanen (bukan dibagi rata).
-          </Text>
+          <Text style={styles.sectionTitle}>{t('input.section.harvestDetail')}</Text>
 
-          <MultiSelectDropdown
-            label="Nama Pemanen"
-            placeholder="Pilih Pemanen (bisa lebih dari 1)"
-            values={formData.pemanen_ids}
-            items={pemanenList.map((pemanen) => ({
-              label: `${pemanen.operator_code} - ${pemanen.name}`,
-              value: pemanen.id,
-            }))}
-            onSelect={(values) => updateField('pemanen_ids', values)}
+          <Dropdown
+            label={t('input.label.harvesterName')}
+            placeholder={t('input.placeholder.selectHarvester')}
+            value={formData.pemanen_id}
+            items={pemanenList
+              .filter(p => !formData.gang_id || p.gang_id === formData.gang_id)
+              .map((pemanen) => ({
+                label: `${pemanen.operator_code} - ${pemanen.name}`,
+                value: pemanen.id,
+              }))}
+            onSelect={(value) => updateField('pemanen_id', value)}
             required
             searchable
           />
 
-          <View style={styles.row}>
-            <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>
-                Rotasi <Text style={styles.required}>*</Text>
-              </Text>
-              <TextInput
-                style={styles.input}
-                value={formData.rotasi}
-                onChangeText={(value) => updateField('rotasi', value)}
-                placeholder="Rotasi"
-                keyboardType="number-pad"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, styles.halfWidth]}>
-              <EditableDropdown
-                label="Nomor Panen"
-                placeholder="Ketik atau pilih"
-                value={formData.nomor_panen}
-                items={Array.from({ length: 20 }, (_, i) => ({
-                  label: `${i + 1}`,
-                  value: `${i + 1}`,
-                }))}
-                onChangeText={(value) => updateField('nomor_panen', value)}
-                keyboardType="number-pad"
-              />
-            </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>
+              {t('input.label.rotation')} <Text style={styles.required}>*</Text>
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={formData.rotasi}
+              onChangeText={(value) => updateField('rotasi', value)}
+              placeholder={t('input.placeholder.enterRotation')}
+              keyboardType="number-pad"
+            />
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Hasil Panen (JJG)</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.yield')}</Text>
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Hasil Panen (JJG)</Text>
+              <Text style={styles.label}>{t('input.label.yieldJjg')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.hasil_panen_bjd}
@@ -625,24 +786,24 @@ export default function InputPanenScreen() {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>BJR</Text>
+              <Text style={styles.label}>{t('input.label.looseFruit')}</Text>
               <TextInput
                 style={styles.input}
-                value={formData.bjr}
-                onChangeText={(value) => updateField('bjr', value)}
+                value={formData.jumlah_brondolan_kg}
+                onChangeText={(value) => updateField('jumlah_brondolan_kg', value)}
                 placeholder="0"
-                keyboardType="number-pad"
+                keyboardType="decimal-pad"
               />
             </View>
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Kriteria Buah</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.fruitCriteria')}</Text>
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Buah Masak</Text>
+              <Text style={styles.label}>{t('input.label.ripe')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.buah_masak}
@@ -653,7 +814,7 @@ export default function InputPanenScreen() {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Buah Mentah</Text>
+              <Text style={styles.label}>{t('input.label.unripe')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.buah_mentah}
@@ -666,7 +827,7 @@ export default function InputPanenScreen() {
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Buah Mengkal</Text>
+              <Text style={styles.label}>{t('input.label.halfRipe')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.buah_mengkal}
@@ -677,7 +838,7 @@ export default function InputPanenScreen() {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Overripe</Text>
+              <Text style={styles.label}>{t('input.label.overripe')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.overripe}
@@ -690,7 +851,7 @@ export default function InputPanenScreen() {
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Abnormal</Text>
+              <Text style={styles.label}>{t('input.label.abnormal')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.abnormal}
@@ -701,7 +862,7 @@ export default function InputPanenScreen() {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Buah Busuk</Text>
+              <Text style={styles.label}>{t('input.label.rotten')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.buah_busuk}
@@ -714,7 +875,7 @@ export default function InputPanenScreen() {
 
           <View style={styles.row}>
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Tangkai Panjang</Text>
+              <Text style={styles.label}>{t('input.label.longStalk')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.tangkai_panjang}
@@ -725,7 +886,7 @@ export default function InputPanenScreen() {
             </View>
 
             <View style={[styles.inputGroup, styles.halfWidth]}>
-              <Text style={styles.label}>Jangkos</Text>
+              <Text style={styles.label}>{t('input.label.emptyBunch')}</Text>
               <TextInput
                 style={styles.input}
                 value={formData.jangkos}
@@ -738,35 +899,60 @@ export default function InputPanenScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Foto Hasil Panen</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.harvestPhoto')}</Text>
 
           {photoUri ? (
             <View>
-              <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+              <View>
+                <Image source={{ uri: photoUri }} style={styles.photoPreview} />
+                <View style={styles.previewTimestampContainer}>
+                  <Image 
+                    source={require('@/assets/images/lg-aep-cmyk-300dpi.jpg')} 
+                    style={styles.timestampLogo} 
+                    resizeMode="contain" 
+                  />
+                  <View>
+                    <Text style={styles.previewTimestampText}>
+                      {divisiList.find(d => d.id === formData.divisi_id)?.estate_name || 'Unknown Estate'}
+                    </Text>
+                    <Text style={styles.previewTimestampText}>
+                      {t('input.label.division')}: {divisiList.find(d => d.id === formData.divisi_id)?.name || '-'}
+                    </Text>
+                    <Text style={styles.previewTimestampText}>
+                      {getFormattedDate(formData.tanggal)}
+                    </Text>
+                    <Text style={styles.previewTimestampText}>
+                      {t('input.label.tph')}: {formData.nomor_panen || '-'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
               <TouchableOpacity style={styles.removePhotoButton} onPress={handleRemovePhoto}>
                 <X size={20} color="#fff" />
-                <Text style={styles.removePhotoText}>Hapus Foto</Text>
+                <Text style={styles.removePhotoText}>{t('input.button.removePhoto')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity style={styles.cameraButton} onPress={handleOpenCamera}>
-              <Camera size={24} color="#2d5016" />
-              <Text style={styles.cameraButtonText}>Ambil Foto Hasil Panen</Text>
-            </TouchableOpacity>
+            <View style={styles.photoButtonsContainer}>
+              <TouchableOpacity style={styles.cameraButton} onPress={handlePickImage}>
+                <ImageIcon size={24} color="#2d5016" />
+                <Text style={styles.cameraButtonText}>{t('input.button.uploadPhoto')}</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
-          <Text style={styles.photoHint}>Foto dapat membantu verifikasi hasil panen</Text>
+          <Text style={styles.photoHint}>{t('input.hint.photo')}</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Keterangan</Text>
+          <Text style={styles.sectionTitle}>{t('input.section.notes')}</Text>
 
           <View style={styles.inputGroup}>
             <TextInput
               style={[styles.input, styles.textArea]}
               value={formData.keterangan}
               onChangeText={(value) => updateField('keterangan', value)}
-              placeholder="Tambahkan keterangan (opsional)"
+              placeholder={t('input.placeholder.addNotes')}
               multiline
               numberOfLines={3}
             />
@@ -783,7 +969,7 @@ export default function InputPanenScreen() {
           ) : (
             <>
               <Save size={20} color="#fff" />
-              <Text style={styles.submitButtonText}>Simpan Data Panen</Text>
+              <Text style={styles.submitButtonText}>{t('input.button.save')}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -791,34 +977,49 @@ export default function InputPanenScreen() {
         <View style={{ height: 32 }} />
       </ScrollView>
 
-      {showCamera && (
-        <View style={styles.cameraContainer}>
-          <CameraView ref={cameraRef} style={styles.camera} facing="back">
-            <View style={styles.cameraOverlay}>
-              <TouchableOpacity style={styles.cameraCloseButton} onPress={() => setShowCamera(false)}>
-                <X size={32} color="#fff" />
-              </TouchableOpacity>
-
-              <View style={styles.cameraActions}>
-                <TouchableOpacity style={styles.captureButton} onPress={handleTakePhoto}>
-                  <Camera size={32} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            </View>
-          </CameraView>
-        </View>
-      )}
-
       {(loading || uploadingPhoto) && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#2d5016" />
             <Text style={styles.loadingText}>
-              {uploadingPhoto ? 'Mengupload foto...' : 'Menyimpan data...'}
+              {uploadingPhoto ? t('input.loading.uploadingPhoto') : t('input.loading.saving')}
             </Text>
           </View>
         </View>
       )}
+
+      <Modal
+        visible={showSuccessModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleModalClose}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconContainer}>
+              <Check size={32} color="#fff" />
+            </View>
+            <Text style={styles.modalTitle}>{t('input.success.title')}</Text>
+            <Text style={styles.modalMessage}>{successMessage}</Text>
+            
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalButtonSecondary]} 
+                onPress={handleModalClose}
+              >
+                <Text style={styles.modalButtonSecondaryText}>{t('input.button.backToMenu')}</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalButtonPrimary]} 
+                onPress={handleModalNext}
+              >
+                <Text style={styles.modalButtonPrimaryText}>{t('input.button.continueInput')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -915,6 +1116,9 @@ const styles = StyleSheet.create({
   halfWidth: {
     flex: 1,
   },
+  fullWidth: {
+    flex: 1,
+  },
   submitButton: {
     backgroundColor: '#2d5016',
     flexDirection: 'row',
@@ -932,6 +1136,13 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  photoButtonsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  flex1: {
+    flex: 1,
   },
   cameraButton: {
     backgroundColor: '#f5f5f5',
@@ -955,6 +1166,49 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#f0f0f0',
     marginBottom: 12,
+  },
+  previewTimestampContainer: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    zIndex: 10,
+  },
+  timestampContainer: {
+    position: 'absolute',
+    bottom: 120,
+    left: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  timestampText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  timestampLogo: {
+    width: 40,
+    height: 40,
+    marginRight: 12,
+    borderRadius: 4,
+    backgroundColor: '#fff',
+  },
+  previewTimestampText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
   },
   removePhotoButton: {
     backgroundColor: '#e53935',
@@ -1052,5 +1306,80 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#c8e6c9',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#2d5016',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 8,
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 24,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  modalButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalButtonPrimary: {
+    backgroundColor: '#2d5016',
+  },
+  modalButtonSecondary: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  modalButtonPrimaryText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalButtonSecondaryText: {
+    color: '#666',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

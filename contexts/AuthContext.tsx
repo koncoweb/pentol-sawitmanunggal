@@ -10,9 +10,10 @@ type Profile = {
   id: string;
   email: string;
   full_name: string | null;
-  role: 'krani_panen' | 'krani_buah' | 'mandor' | 'asisten' | 'estate_manager' | 'regional_gm';
+  role: 'krani_panen' | 'krani_buah' | 'mandor' | 'asisten' | 'senior_asisten' | 'estate_manager' | 'regional_gm' | 'administrator';
   divisi_id: string | null;
   gang_id: string | null;
+  photo_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -24,6 +25,8 @@ type AuthContextType = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  forgetPassword: (email: string) => Promise<void>;
+  resetPassword: (password: string, token: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -69,7 +72,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const db = await getDbClient(); 
       
-      const { rows } = await db.query('SELECT * FROM profiles WHERE id = $1', [userId]);
+      const { rows } = await db.query(`
+        SELECT p.*
+        FROM profiles p 
+        WHERE p.id = $1
+        LIMIT 1
+      `, [userId]);
       
       if (rows.length > 0) {
         setProfile(rows[0] as Profile);
@@ -114,6 +122,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null);
   };
 
+  const forgetPassword = async (email: string) => {
+    const { error } = await authClient.requestPasswordReset({
+      email,
+      redirectTo: '/reset-password',
+    });
+
+    if (error) {
+      throw error;
+    }
+  };
+
+  const resetPassword = async (password: string, token: string) => {
+    const { error } = await authClient.resetPassword({
+      newPassword: password,
+      token,
+    });
+
+    if (error) {
+      throw error;
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -123,6 +153,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         signIn,
         signOut,
+        forgetPassword,
+        resetPassword,
       }}
     >
       {children}

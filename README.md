@@ -15,7 +15,7 @@ Aplikasi digital terintegrasi untuk mendigitalkan seluruh rantai pasok panen kel
 
 - **Frontend**: React Native dengan Expo SDK 54
 - **Navigation**: Expo Router (file-based routing)
-- **Backend**: Supabase (PostgreSQL, Auth, RLS)
+- **Backend**: Neon Database (PostgreSQL), Better Auth
 - **Styling**: React Native StyleSheet
 - **Icons**: lucide-react-native
 - **Platform**: Web (primary), iOS & Android ready
@@ -25,7 +25,7 @@ Aplikasi digital terintegrasi untuk mendigitalkan seluruh rantai pasok panen kel
 - Node.js 18+
 - npm atau yarn
 - Expo CLI (akan terinstall otomatis)
-- Account Supabase (sudah dikonfigurasi)
+- Account Neon Database (sudah dikonfigurasi)
 
 ## 🔧 Installation
 
@@ -44,8 +44,8 @@ npm install
 
 File `.env` sudah dikonfigurasi dengan:
 ```env
-EXPO_PUBLIC_SUPABASE_URL=https://[project-id].supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=[anon-key]
+DATABASE_URL=postgres://user:pass@host/db
+EXPO_PUBLIC_AUTH_URL=http://localhost:3000
 ```
 
 4. **Start development server**
@@ -86,7 +86,7 @@ Aplikasi mendukung 6 role pengguna dengan dashboard khusus:
 
 ## 🔐 Authentication
 
-Sistem menggunakan email/password authentication via Supabase.
+Sistem menggunakan email/password authentication via Better Auth.
 
 ### Akun Dummy untuk Testing
 
@@ -114,7 +114,7 @@ Lihat file `CREDENTIALS.md` untuk detail lengkap dan metode alternatif.
 
 **Default Role Assignment:**
 - User baru otomatis mendapat role `krani_panen`
-- Role dapat diubah via Supabase Dashboard di tabel `profiles`
+- Role dapat diubah via Neon Dashboard di tabel `profiles`
 
 ## 📱 Features (Phase 1)
 
@@ -143,7 +143,7 @@ Lihat file `CREDENTIALS.md` untuk detail lengkap dan metode alternatif.
 
 ## 🗄️ Database
 
-Database menggunakan PostgreSQL via Supabase dengan Row Level Security (RLS).
+Database menggunakan PostgreSQL via Neon Database dengan Row Level Security (RLS).
 
 **Tables:**
 - `profiles` - User profiles dengan role
@@ -190,7 +190,7 @@ npm run lint              # Run ESLint
 Dokumentasi lengkap tersedia di folder `docs/`:
 
 - **Database.md** - Schema, RLS policies, migrations
-- **Backend.md** - Supabase setup, auth, API
+- **Backend.md** - Neon setup, auth, sync logic
 - **Frontend.md** - Components, styling, navigation
 - **Features.md** - Detailed feature specifications
 
@@ -288,7 +288,7 @@ Untuk pertanyaan atau issue, silakan buka GitHub issue atau hubungi tim developm
 ## 🙏 Acknowledgments
 
 - Expo team untuk amazing framework
-- Supabase untuk backend infrastructure
+- Neon untuk backend infrastructure
 - Lucide untuk icon library
 - React Native community
 

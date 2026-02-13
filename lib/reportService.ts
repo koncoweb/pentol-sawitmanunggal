@@ -13,8 +13,10 @@ export type HarvestRecordRaw = {
   tanggal: string;
   created_at: string;
   divisi_name: string;
+  estate_name: string;
   gang_name: string;
   blok_names: string[];
+  tahun_tanam: number;
   pemanen_details: Array<{ operator_code: string; name: string }>;
   rotasi: number;
   nomor_panen: number;
@@ -46,16 +48,18 @@ export const fetchReportData = async (
         hr.tanggal,
         hr.created_at,
         d.name as divisi_name,
+        d.estate_name,
         g.name as gang_name,
         b.name as blok_name,
+        b.tahun_tanam,
         p.nik as operator_code,
         p.name as pemanen_name,
         hr.rotasi,
         hr.nomor_panen,
         hr.jumlah_jjg as hasil_panen_jjg,
-        t.nomor_tph,
+        t.name as nomor_tph,
         hr.bjr,
-        hr.hasil_panen_bjd as jumlah_brondolan_kg,
+        hr.jumlah_brondolan_kg,
         hr.buah_masak,
         hr.buah_mentah,
         hr.buah_mengkal,
@@ -105,13 +109,15 @@ export const fetchReportData = async (
       tanggal: typeof row.tanggal === 'string' ? row.tanggal : new Date(row.tanggal).toISOString(),
       created_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
       divisi_name: row.divisi_name || '-',
+      estate_name: row.estate_name || '-',
       gang_name: row.gang_name || '-',
       blok_names: [row.blok_name || '-'],
+      tahun_tanam: row.tahun_tanam || 0,
       pemanen_details: [{ operator_code: row.operator_code || '-', name: row.pemanen_name || '-' }],
       rotasi: row.rotasi,
       nomor_panen: row.nomor_panen ? parseInt(row.nomor_panen) : 0,
       hasil_panen_jjg: row.hasil_panen_jjg || 0,
-      nomor_tph: row.nomor_tph || '-',
+      nomor_tph: row.nomor_tph || row.nomor_panen || '-',
       bjr: row.bjr || 0,
       jumlah_brondolan_kg: parseFloat(row.jumlah_brondolan_kg) || 0,
       buah_masak: row.buah_masak || 0,
@@ -144,10 +150,10 @@ export const transformToExportFormat = (
     divisi: record.divisi_name,
     gang: record.gang_name,
     blok: record.blok_names.join(', '),
-    op: record.pemanen_details.map((p) => p.operator_code).join(', '),
+    tahun_tanam: record.tahun_tanam.toString(),
     rotasi: record.rotasi,
     nama_pemanen: record.pemanen_details.map((p) => p.name).join(', '),
-    nomor_panen: record.nomor_panen,
+    nomor_panen: record.nomor_panen.toString(),
     hasil_panen_jjg: record.hasil_panen_jjg,
     nomor_tph: record.nomor_tph,
     bjr: record.bjr,

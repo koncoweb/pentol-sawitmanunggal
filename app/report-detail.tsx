@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   TextInput,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { ArrowLeft, Calendar, Filter, Image as ImageIcon, X, Download } from 'lucide-react-native';
 import { getDbClient } from '@/lib/db';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,6 +21,7 @@ type HarvestRecord = {
   tanggal: string;
   created_at: string;
   divisi_name: string;
+  estate_name: string;
   gang_name: string;
   blok_names: string[];
   pemanen_details: Array<{ operator_code: string; name: string }>;
@@ -43,21 +44,62 @@ type HarvestRecord = {
   created_by_name: string;
 };
 
+const HarvestImage = ({ url, onPress }: { url: string | null, onPress: () => void }) => {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    if (url) console.log('Rendering HarvestImage with URL:', url);
+  }, [url]);
+
+  if (!url) {
+    return (
+      <View style={[styles.thumbnail, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#f0f0f0' }]}>
+        <Text style={{ fontSize: 10, color: '#999' }}>No Img</Text>
+      </View>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <View style={[styles.thumbnail, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#ffebee' }]}>
+        <ImageIcon size={20} color="#e53935" />
+      </View>
+    );
+  }
+
+  return (
+    <TouchableOpacity onPress={onPress}>
+      <Image 
+        source={{ uri: url }} 
+        style={[styles.thumbnail, { borderWidth: 1, borderColor: '#ccc' }]} 
+        resizeMode="cover"
+        onError={(e) => {
+          console.log('Image load error:', url);
+          setHasError(true);
+        }}
+      />
+    </TouchableOpacity>
+  );
+};
+
 export default function ReportDetailScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const { profile } = useAuth();
   const params = useLocalSearchParams();
   const reportType = params.type as string;
 
   const [records, setRecords] = useState<HarvestRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
   const [filterDivisi, setFilterDivisi] = useState<string>('');
   const [filterDate, setFilterDate] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<HarvestRecord | null>(null);
 
   useEffect(() => {
+    console.log('ReportDetailScreen mounted v2 (Neon DB Photo Display)');
     loadReportData();
   }, [reportType]);
 
@@ -68,10 +110,11 @@ export default function ReportDetailScreen() {
       // Calculate date range based on report type
       const today = new Date();
       let startDate = new Date();
+      startDate.setHours(0, 0, 0, 0);
 
       switch (reportType) {
         case 'daily':
-          startDate.setDate(today.getDate() - 1);
+          startDate.setDate(today.getDate() - 1); // Last 24h + today
           break;
         case 'weekly':
           startDate.setDate(today.getDate() - 7);
@@ -80,7 +123,7 @@ export default function ReportDetailScreen() {
           startDate.setMonth(today.getMonth() - 1);
           break;
         default:
-          startDate.setDate(today.getDate() - 7);
+          startDate.setDate(today.getDate() - 30); // Default to 30 days instead of 7 to show more data
       }
 
       const db = await getDbClient();
@@ -91,6 +134,7 @@ export default function ReportDetailScreen() {
           hr.tanggal,
           hr.created_at,
           d.name as divisi_name,
+          d.estate_name,
           g.name as gang_name,
           b.name as blok_name,
           p.nik as operator_code,
@@ -98,9 +142,9 @@ export default function ReportDetailScreen() {
           hr.rotasi,
           hr.nomor_panen,
           hr.jumlah_jjg as hasil_panen_jjg,
-          t.nomor_tph,
+          t.name as nomor_tph,
           hr.bjr,
-          hr.hasil_panen_bjd as jumlah_brondolan_kg,
+          hr.jumlah_brondolan_kg,
           hr.buah_masak,
           hr.buah_mentah,
           hr.buah_mengkal,
@@ -119,44 +163,90 @@ export default function ReportDetailScreen() {
         LEFT JOIN gang g ON p.gang_id = g.id
         LEFT JOIN tph t ON hr.tph_id = t.id
         LEFT JOIN profiles pr ON hr.created_by = pr.id
-        WHERE hr.created_at >= $1
-        ORDER BY hr.created_at DESC
-        LIMIT 100
+        WHERE hr.tanggal >= $1
+        ORDER BY hr.tanggal DESC, hr.created_at DESC
+        LIMIT 500
       `;
 
-      const { rows } = await db.query(query, [startDate.toISOString()]);
+      // Use YYYY-MM-DD format for date comparison to avoid timezone issues
+      const dateParam = startDate.toISOString().split('T')[0];
+      console.log('Fetching report data from:', dateParam);
+      
+      const { rows } = await db.query(query, [dateParam]);
+
+      // Process photos from Neon DB
+      const photoIds = rows
+        .map((r: any) => r.foto_url)
+        .filter((url: string | null) => url && url.startsWith('db-photo://'))
+        .map((url: string) => url.replace('db-photo://', ''));
+
+      const photoMap = new Map<string, string>();
+      
+      if (photoIds.length > 0) {
+        try {
+          console.log(`Fetching ${photoIds.length} photos from DB...`);
+          // Fetch photos
+          const photoQuery = `
+            SELECT id, photo_data 
+            FROM harvest_photos 
+            WHERE id = ANY($1::uuid[])
+          `;
+          const photoResult = await db.query(photoQuery, [photoIds]);
+          
+          photoResult.rows.forEach((row: any) => {
+            if (row.photo_data) {
+                // Check if it already has prefix, if not add it
+                const prefix = row.photo_data.startsWith('data:') ? '' : 'data:image/jpeg;base64,';
+                photoMap.set(row.id, `${prefix}${row.photo_data}`);
+            }
+          });
+        } catch (err) {
+            console.error('Error fetching photos:', err);
+        }
+      }
+
       await db.end();
 
-      const formattedRecords: HarvestRecord[] = rows.map((row: any) => ({
-        id: row.id,
-        tanggal: typeof row.tanggal === 'string' ? row.tanggal : new Date(row.tanggal).toISOString(),
-        created_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
-        divisi_name: row.divisi_name || '-',
-        gang_name: row.gang_name || '-',
-        blok_names: [row.blok_name || '-'],
-        pemanen_details: [{ operator_code: row.operator_code || '-', name: row.pemanen_name || '-' }],
-        rotasi: row.rotasi,
-        nomor_panen: row.nomor_panen ? parseInt(row.nomor_panen) : 0,
-        hasil_panen_jjg: row.hasil_panen_jjg || 0,
-        nomor_tph: row.nomor_tph || '-',
-        bjr: row.bjr || 0,
-        jumlah_brondolan_kg: parseFloat(row.jumlah_brondolan_kg) || 0,
-        buah_masak: row.buah_masak || 0,
-        buah_mentah: row.buah_mentah || 0,
-        buah_mengkal: row.buah_mengkal || 0,
-        overripe: row.overripe || 0,
-        abnormal: row.abnormal || 0,
-        buah_busuk: row.buah_busuk || 0,
-        tangkai_panjang: row.tangkai_panjang || 0,
-        jangkos: row.jangkos || 0,
-        keterangan: row.keterangan || '-',
-        foto_url: row.foto_url,
-        created_by_name: row.created_by_name || 'Unknown',
-      }));
+      const formattedRecords: HarvestRecord[] = rows.map((row: any) => {
+        let finalPhotoUrl = row.foto_url;
+        if (finalPhotoUrl && finalPhotoUrl.startsWith('db-photo://')) {
+            const id = finalPhotoUrl.replace('db-photo://', '');
+            finalPhotoUrl = photoMap.get(id) || null;
+        }
+
+        return {
+          id: row.id,
+          tanggal: typeof row.tanggal === 'string' ? row.tanggal : new Date(row.tanggal).toISOString(),
+          created_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
+          divisi_name: row.divisi_name || '-',
+          estate_name: row.estate_name || 'Unknown Estate',
+          gang_name: row.gang_name || '-',
+          blok_names: [row.blok_name || '-'],
+          pemanen_details: [{ operator_code: row.operator_code || '-', name: row.pemanen_name || '-' }],
+          rotasi: row.rotasi,
+          nomor_panen: row.nomor_panen ? parseInt(row.nomor_panen) : 0,
+          hasil_panen_jjg: row.hasil_panen_jjg || 0,
+          nomor_tph: row.nomor_tph || row.nomor_panen || '-',
+          bjr: row.bjr || 0,
+          jumlah_brondolan_kg: parseFloat(row.jumlah_brondolan_kg) || 0,
+          buah_masak: row.buah_masak || 0,
+          buah_mentah: row.buah_mentah || 0,
+          buah_mengkal: row.buah_mengkal || 0,
+          overripe: row.overripe || 0,
+          abnormal: row.abnormal || 0,
+          buah_busuk: row.buah_busuk || 0,
+          tangkai_panjang: row.tangkai_panjang || 0,
+          jangkos: row.jangkos || 0,
+          keterangan: row.keterangan || '-',
+          foto_url: finalPhotoUrl,
+          created_by_name: row.created_by_name || 'Unknown',
+        };
+      });
 
       setRecords(formattedRecords);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading report data:', error);
+      setError(error.message || 'Gagal memuat data laporan');
     } finally {
       setLoading(false);
     }
@@ -193,6 +283,14 @@ export default function ReportDetailScreen() {
     }
   };
 
+  const handleBack = () => {
+    if (navigation.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/reports');
+    }
+  };
+
   const filteredRecords = records.filter(record => {
     if (filterDivisi && !record.divisi_name.toLowerCase().includes(filterDivisi.toLowerCase())) {
       return false;
@@ -203,10 +301,36 @@ export default function ReportDetailScreen() {
     return true;
   });
 
+  const totals = useMemo(() => {
+    return filteredRecords.reduce((acc, record) => ({
+      hasil_panen_jjg: acc.hasil_panen_jjg + (record.hasil_panen_jjg || 0),
+      jumlah_brondolan_kg: acc.jumlah_brondolan_kg + (record.jumlah_brondolan_kg || 0),
+      buah_masak: acc.buah_masak + (record.buah_masak || 0),
+      buah_mentah: acc.buah_mentah + (record.buah_mentah || 0),
+      buah_mengkal: acc.buah_mengkal + (record.buah_mengkal || 0),
+      overripe: acc.overripe + (record.overripe || 0),
+      abnormal: acc.abnormal + (record.abnormal || 0),
+      buah_busuk: acc.buah_busuk + (record.buah_busuk || 0),
+      tangkai_panjang: acc.tangkai_panjang + (record.tangkai_panjang || 0),
+      jangkos: acc.jangkos + (record.jangkos || 0),
+    }), {
+      hasil_panen_jjg: 0,
+      jumlah_brondolan_kg: 0,
+      buah_masak: 0,
+      buah_mentah: 0,
+      buah_mengkal: 0,
+      overripe: 0,
+      abnormal: 0,
+      buah_busuk: 0,
+      tangkai_panjang: 0,
+      jangkos: 0,
+    });
+  }, [filteredRecords]);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <ArrowLeft size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.title}>{getReportTitle()}</Text>
@@ -239,74 +363,104 @@ export default function ReportDetailScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2d5016" />
         </View>
+      ) : error ? (
+        <View style={styles.emptyContainer}>
+          <Text style={[styles.emptyText, { color: '#e53935', marginBottom: 16 }]}>{error}</Text>
+          <TouchableOpacity 
+            onPress={loadReportData} 
+            style={{ 
+              paddingVertical: 10, 
+              paddingHorizontal: 20, 
+              backgroundColor: '#2d5016', 
+              borderRadius: 8 
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '600' }}>Coba Lagi</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <ScrollView style={styles.content}>
-          {filteredRecords.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>Tidak ada data laporan</Text>
-            </View>
-          ) : (
-            filteredRecords.map((record) => (
-              <View key={record.id} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View>
-                    <Text style={styles.date}>{formatDate(record.tanggal)}</Text>
-                    <Text style={styles.time}>{formatTime(record.created_at)}</Text>
-                  </View>
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{record.divisi_name}</Text>
-                  </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+              <View>
+                <View style={styles.tableHeader}>
+                  <Text style={[styles.tableHeaderCell, { width: 100 }]}>Tanggal</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 120 }]}>Divisi</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 100 }]}>Gang</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 100 }]}>Blok</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 80 }]}>TPH</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 150 }]}>Pemanen</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 80, textAlign: 'right' }]}>Janjang</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 80, textAlign: 'right' }]}>Brd (kg)</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Masak</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Mentah</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Mengkal</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Over</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Abn</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 60, textAlign: 'right' }]}>Busuk</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 70, textAlign: 'right' }]}>T. Pjg</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 70, textAlign: 'right' }]}>Jangkos</Text>
+                  <Text style={[styles.tableHeaderCell, { width: 80, textAlign: 'center' }]}>Foto</Text>
                 </View>
 
-                <View style={styles.cardBody}>
-                  <View style={styles.row}>
-                    <Text style={styles.label}>Gang:</Text>
-                    <Text style={styles.value}>{record.gang_name}</Text>
+                {filteredRecords.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>Tidak ada data laporan</Text>
                   </View>
-                  <View style={styles.row}>
-                    <Text style={styles.label}>Blok:</Text>
-                    <Text style={styles.value}>{record.blok_names.join(', ')}</Text>
-                  </View>
-                  <View style={styles.row}>
-                    <Text style={styles.label}>Pemanen:</Text>
-                    <Text style={styles.value}>
-                      {record.pemanen_details.map(p => p.name).join(', ')}
-                    </Text>
-                  </View>
-                  <View style={styles.divider} />
-                  <View style={styles.statsGrid}>
-                    <View style={styles.statItem}>
-                      <Text style={styles.statLabel}>Janjang</Text>
-                      <Text style={styles.statValue}>{record.hasil_panen_jjg}</Text>
+                ) : (
+                  <>
+                    {filteredRecords.map((record, index) => (
+                      <View key={record.id} style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlt]}>
+                        <Text style={[styles.tableCell, { width: 100 }]}>{formatDate(record.tanggal)}</Text>
+                        <Text style={[styles.tableCell, { width: 120 }]}>{record.divisi_name}</Text>
+                        <Text style={[styles.tableCell, { width: 100 }]}>{record.gang_name}</Text>
+                        <Text style={[styles.tableCell, { width: 100 }]}>{record.blok_names.join(', ')}</Text>
+                        <Text style={[styles.tableCell, { width: 80 }]}>{record.nomor_tph}</Text>
+                        <Text style={[styles.tableCell, { width: 150 }]}>
+                          {record.pemanen_details.map(p => p.name).join(', ')}
+                        </Text>
+                        <Text style={[styles.tableCell, { width: 80, textAlign: 'right' }]}>{record.hasil_panen_jjg}</Text>
+                        <Text style={[styles.tableCell, { width: 80, textAlign: 'right' }]}>{record.jumlah_brondolan_kg}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.buah_masak}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.buah_mentah}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.buah_mengkal}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.overripe}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.abnormal}</Text>
+                        <Text style={[styles.tableCell, { width: 60, textAlign: 'right' }]}>{record.buah_busuk}</Text>
+                        <Text style={[styles.tableCell, { width: 70, textAlign: 'right' }]}>{record.tangkai_panjang}</Text>
+                        <Text style={[styles.tableCell, { width: 70, textAlign: 'right' }]}>{record.jangkos}</Text>
+                        <View style={[styles.tableCell, { width: 80, alignItems: 'center', justifyContent: 'center' }]}>
+                          <HarvestImage 
+                            url={record.foto_url} 
+                            onPress={() => record.foto_url && setSelectedRecord(record)}
+                          />
+                        </View>
+                      </View>
+                    ))}
+                    {/* Total Row */}
+                    <View style={[styles.tableRow, { backgroundColor: '#e8f5e9', borderTopWidth: 2, borderTopColor: '#2d5016' }]}>
+                      <Text style={[styles.tableCell, { width: 100, fontWeight: 'bold' }]}>TOTAL</Text>
+                      <Text style={[styles.tableCell, { width: 120 }]}></Text>
+                      <Text style={[styles.tableCell, { width: 100 }]}></Text>
+                      <Text style={[styles.tableCell, { width: 100 }]}></Text>
+                      <Text style={[styles.tableCell, { width: 80 }]}></Text>
+                      <Text style={[styles.tableCell, { width: 150 }]}></Text>
+                      <Text style={[styles.tableCell, { width: 80, textAlign: 'right', fontWeight: 'bold' }]}>{totals.hasil_panen_jjg}</Text>
+                      <Text style={[styles.tableCell, { width: 80, textAlign: 'right', fontWeight: 'bold' }]}>{totals.jumlah_brondolan_kg.toFixed(2)}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.buah_masak}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.buah_mentah}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.buah_mengkal}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.overripe}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.abnormal}</Text>
+                      <Text style={[styles.tableCell, { width: 60, textAlign: 'right', fontWeight: 'bold' }]}>{totals.buah_busuk}</Text>
+                      <Text style={[styles.tableCell, { width: 70, textAlign: 'right', fontWeight: 'bold' }]}>{totals.tangkai_panjang}</Text>
+                      <Text style={[styles.tableCell, { width: 70, textAlign: 'right', fontWeight: 'bold' }]}>{totals.jangkos}</Text>
+                      <View style={[styles.tableCell, { width: 80 }]}></View>
                     </View>
-                    <View style={styles.statItem}>
-                      <Text style={styles.statLabel}>BJR</Text>
-                      <Text style={styles.statValue}>{record.bjr}</Text>
-                    </View>
-                    <View style={styles.statItem}>
-                      <Text style={styles.statLabel}>Brondolan</Text>
-                      <Text style={styles.statValue}>{record.jumlah_brondolan_kg} kg</Text>
-                    </View>
-                  </View>
-                  
-                  {record.foto_url && (
-                    <TouchableOpacity
-                      style={styles.photoButton}
-                      onPress={() => setSelectedPhoto(record.foto_url)}
-                    >
-                      <ImageIcon size={20} color="#2d5016" />
-                      <Text style={styles.photoButtonText}>Lihat Foto</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                <View style={styles.cardFooter}>
-                  <Text style={styles.footerText}>Input oleh: {record.created_by_name}</Text>
-                </View>
+                  </>
+                )}
               </View>
-            ))
-          )}
-        </ScrollView>
+            </ScrollView>
+          </ScrollView>
       )}
 
       <TouchableOpacity
@@ -317,23 +471,46 @@ export default function ReportDetailScreen() {
       </TouchableOpacity>
 
       <Modal
-        visible={!!selectedPhoto}
+        visible={!!selectedRecord}
         transparent={true}
-        onRequestClose={() => setSelectedPhoto(null)}
+        onRequestClose={() => setSelectedRecord(null)}
       >
         <View style={styles.modalContainer}>
           <TouchableOpacity
             style={styles.closeButton}
-            onPress={() => setSelectedPhoto(null)}
+            onPress={() => setSelectedRecord(null)}
           >
             <X size={30} color="#fff" />
           </TouchableOpacity>
-          {selectedPhoto && (
-            <Image
-              source={{ uri: selectedPhoto }}
-              style={styles.fullImage}
-              resizeMode="contain"
-            />
+          {selectedRecord && selectedRecord.foto_url && (
+            <View style={styles.fullImageContainer}>
+              <Image
+                source={{ uri: selectedRecord.foto_url }}
+                style={styles.fullImage}
+                resizeMode="contain"
+              />
+              <View style={styles.timestampOverlay}>
+                <Image 
+                  source={require('@/assets/images/lg-aep-cmyk-300dpi.jpg')} 
+                  style={styles.timestampLogo} 
+                  resizeMode="contain" 
+                />
+                <View>
+                  <Text style={styles.timestampText}>
+                    {selectedRecord.estate_name}
+                  </Text>
+                  <Text style={styles.timestampText}>
+                    Divisi: {selectedRecord.divisi_name}
+                  </Text>
+                  <Text style={styles.timestampText}>
+                    {new Date(selectedRecord.tanggal).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, Waktu: {new Date(selectedRecord.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </Text>
+                  <Text style={styles.timestampText}>
+                    TPH: {selectedRecord.nomor_tph}
+                  </Text>
+                </View>
+              </View>
+            </View>
           )}
         </View>
       </Modal>
@@ -406,112 +583,46 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666',
   },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 16,
-    overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  cardHeader: {
+  tableHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    padding: 16,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#2d5016',
+    paddingVertical: 12,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  tableHeaderCell: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+    paddingHorizontal: 8,
+    textAlign: 'left',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
-  },
-  date: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  time: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 2,
-  },
-  badge: {
-    backgroundColor: '#e8f5e9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  badgeText: {
-    fontSize: 12,
-    color: '#2d5016',
-    fontWeight: 'bold',
-  },
-  cardBody: {
-    padding: 16,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  label: {
-    fontSize: 14,
-    color: '#666',
-  },
-  value: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
-    flex: 1,
-    textAlign: 'right',
-    marginLeft: 16,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#eee',
-    marginVertical: 12,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  statItem: {
     alignItems: 'center',
   },
-  statLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  statValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2d5016',
-  },
-  photoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 16,
-    padding: 8,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    gap: 8,
-  },
-  photoButtonText: {
-    color: '#2d5016',
-    fontWeight: '500',
-  },
-  cardFooter: {
-    padding: 12,
+  tableRowAlt: {
     backgroundColor: '#f9f9f9',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
   },
-  footerText: {
+  tableCell: {
+    fontSize: 13,
+    color: '#333',
+    paddingHorizontal: 8,
+    textAlign: 'left',
+  },
+  thumbnail: {
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+    backgroundColor: '#eee',
+  },
+  noData: {
     fontSize: 12,
-    color: '#666',
+    color: '#999',
     fontStyle: 'italic',
   },
   fab: {
@@ -543,8 +654,42 @@ const styles = StyleSheet.create({
     zIndex: 1,
     padding: 8,
   },
-  fullImage: {
+  fullImageContainer: {
     width: '100%',
     height: '80%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  timestampOverlay: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    flexDirection: 'row',
+    zIndex: 10,
+  },
+  timestampLogo: {
+    width: 40,
+    height: 40,
+    marginRight: 12,
+    borderRadius: 4,
+    backgroundColor: '#fff',
+  },
+  timestampText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
 });

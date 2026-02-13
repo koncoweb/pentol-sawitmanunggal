@@ -1,11 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { User, MapPin, Building2, Info, LogOut } from 'lucide-react-native';
 import { router } from 'expo-router';
+import { useTranslation } from 'react-i18next';
+import LanguageSelector from '@/components/LanguageSelector';
 
 export default function ProfileScreen() {
   const { profile, signOut } = useAuth();
+  const { t } = useTranslation();
 
   const handleLogout = async () => {
     await signOut();
@@ -14,12 +17,14 @@ export default function ProfileScreen() {
 
   const getRoleName = (role: string) => {
     const roleMap: Record<string, string> = {
-      krani_panen: 'Krani Panen',
-      krani_buah: 'Krani Buah / Transport',
-      mandor: 'Mandor Panen',
-      asisten: 'Asisten Divisi',
-      estate_manager: 'Estate Manager',
-      regional_gm: 'Regional / General Manager',
+      krani_panen: t('roles.kraniPanen'),
+      krani_buah: t('roles.kraniBuah'),
+      mandor: t('roles.mandor'),
+      asisten: t('roles.asisten'),
+      senior_asisten: t('roles.seniorAsisten'),
+      estate_manager: t('roles.estateManager'),
+      regional_gm: t('roles.regionalGm'),
+      administrator: t('roles.administrator'),
     };
     return roleMap[role] || role;
   };
@@ -28,7 +33,11 @@ export default function ProfileScreen() {
     <ScrollView style={styles.container}>
       <View style={styles.headerCard}>
         <View style={styles.avatar}>
-          <User size={40} color="#fff" />
+          {profile?.photo_url ? (
+            <Image source={{ uri: profile.photo_url }} style={styles.avatarImage} />
+          ) : (
+            <User size={40} color="#fff" />
+          )}
         </View>
         <Text style={styles.userName}>{profile?.full_name}</Text>
         <View style={styles.roleBadge}>
@@ -37,7 +46,7 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Informasi Akun</Text>
+        <Text style={styles.sectionTitle}>{t('common.accountInfo')}</Text>
 
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
@@ -45,7 +54,7 @@ export default function ProfileScreen() {
               <User size={20} color="#2d5016" />
             </View>
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Email</Text>
+              <Text style={styles.infoLabel}>{t('auth.email')}</Text>
               <Text style={styles.infoValue}>{profile?.email}</Text>
             </View>
           </View>
@@ -57,9 +66,9 @@ export default function ProfileScreen() {
               <Building2 size={20} color="#2d5016" />
             </View>
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Divisi</Text>
+              <Text style={styles.infoLabel}>{t('common.division')}</Text>
               <Text style={styles.infoValue}>
-                {profile?.divisi_id ? 'Terdaftar' : 'Belum terdaftar'}
+                {profile?.divisi_id ? t('common.registered') : t('common.notRegistered')}
               </Text>
             </View>
           </View>
@@ -71,9 +80,9 @@ export default function ProfileScreen() {
               <MapPin size={20} color="#2d5016" />
             </View>
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Gang</Text>
+              <Text style={styles.infoLabel}>{t('common.gang')}</Text>
               <Text style={styles.infoValue}>
-                {profile?.gang_id ? 'Terdaftar' : 'Tidak ada'}
+                {profile?.gang_id ? t('common.registered') : t('common.none')}
               </Text>
             </View>
           </View>
@@ -81,7 +90,14 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Tentang Aplikasi</Text>
+        <Text style={styles.sectionTitle}>{t('common.settings')}</Text>
+        <View style={styles.infoCard}>
+          <LanguageSelector />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>{t('common.aboutApp')}</Text>
 
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
@@ -89,7 +105,7 @@ export default function ProfileScreen() {
               <Info size={20} color="#2d5016" />
             </View>
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Versi Aplikasi</Text>
+              <Text style={styles.infoLabel}>{t('common.appVersion')}</Text>
               <Text style={styles.infoValue}>1.0.0</Text>
             </View>
           </View>
@@ -101,8 +117,8 @@ export default function ProfileScreen() {
               <Building2 size={20} color="#2d5016" />
             </View>
             <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Nama Aplikasi</Text>
-              <Text style={styles.infoValue}>Sawit Manunggal</Text>
+              <Text style={styles.infoLabel}>{t('common.appName')}</Text>
+              <Text style={styles.infoValue}>HMS - AEP Nusantara Plantations</Text>
             </View>
           </View>
         </View>
@@ -111,7 +127,7 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <LogOut size={20} color="#d32f2f" />
-          <Text style={styles.logoutText}>Keluar dari Akun</Text>
+          <Text style={styles.logoutText}>{t('common.logout')}</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
@@ -136,6 +152,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   userName: {
     fontSize: 24,

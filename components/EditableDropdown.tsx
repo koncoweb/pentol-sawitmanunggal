@@ -8,7 +8,8 @@ import {
   ScrollView,
   TextInput,
 } from 'react-native';
-import { ChevronDown, X } from 'lucide-react-native';
+import { ChevronDown, X, Search } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface DropdownItem {
   label: string;
@@ -23,6 +24,7 @@ interface EditableDropdownProps {
   onChangeText: (value: string) => void;
   required?: boolean;
   keyboardType?: 'default' | 'numeric' | 'number-pad';
+  searchable?: boolean;
 }
 
 export default function EditableDropdown({
@@ -33,12 +35,22 @@ export default function EditableDropdown({
   onChangeText,
   required = false,
   keyboardType = 'default',
+  searchable = false,
 }: EditableDropdownProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredItems = searchable
+    ? items.filter((item) =>
+        item.label.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : items;
 
   const handleSelect = (itemValue: string) => {
     onChangeText(itemValue);
     setVisible(false);
+    setSearchQuery('');
   };
 
   return (
@@ -78,10 +90,10 @@ export default function EditableDropdown({
           <ScrollView style={styles.itemList}>
             {items.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>Tidak ada data</Text>
+                <Text style={styles.emptyText}>{t('dropdown.noDataShort')}</Text>
               </View>
             ) : (
-              items.map((item) => (
+              filteredItems.map((item) => (
                 <TouchableOpacity
                   key={item.value}
                   style={[
@@ -184,5 +196,21 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     color: '#999',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    margin: 16,
+    marginBottom: 0,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#333',
+    padding: 0,
   },
 });

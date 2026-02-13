@@ -5,9 +5,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@/contexts/AuthContext';
 import { FileText, Truck, ClipboardCheck, AlertTriangle } from 'lucide-react-native';
 import { getDbClient } from '@/lib/db';
+import { useTranslation } from 'react-i18next';
 
 export default function KraniBuahDashboard() {
   const { profile } = useAuth();
+  const { t } = useTranslation();
   const router = useRouter();
   const [stats, setStats] = useState({ spbToday: 0, shippedToday: 0, restanToday: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
@@ -68,7 +70,7 @@ export default function KraniBuahDashboard() {
       );
 
       if (!rows?.length) {
-        Alert.alert('Data Truk', 'Belum ada SPB hari ini.');
+        Alert.alert(t('kraniBuah.alert.truckData.title'), t('kraniBuah.alert.truckData.noData'));
         return;
       }
 
@@ -76,11 +78,11 @@ export default function KraniBuahDashboard() {
         .map((r) => `${r.nomor_spb}\n${r.truck_plate} • ${r.driver_name} • ${String(r.status).toUpperCase()}`)
         .join('\n\n');
 
-      Alert.alert('Data Truk (Hari Ini)', message);
+      Alert.alert(t('kraniBuah.alert.truckData.titleToday'), message);
     } finally {
       await db.end();
     }
-  }, []);
+  }, [t]);
 
   const showRestan = useCallback(async () => {
     const db = await getDbClient();
@@ -103,22 +105,26 @@ export default function KraniBuahDashboard() {
       );
 
       if (!rows?.length) {
-        Alert.alert('Cek Restan', 'Tidak ada restan hari ini.');
+        Alert.alert(t('kraniBuah.alert.restan.title'), t('kraniBuah.alert.restan.noData'));
         return;
       }
 
       const totalJanjang = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_janjang) || 0), 0);
       const message = [
-        `Total Restan: ${totalJanjang} JJG`,
+        t('kraniBuah.alert.restan.total', { count: totalJanjang }),
         '',
-        ...(rows as any[]).map((r) => `• ${r.blok_name}: ${r.total_janjang} JJG (${r.record_count} data)`),
+        ...(rows as any[]).map((r) => t('kraniBuah.alert.restan.listItem', { 
+          block: r.blok_name, 
+          count: r.total_janjang, 
+          records: r.record_count 
+        })),
       ].join('\n');
 
-      Alert.alert('Cek Restan (Hari Ini)', message);
+      Alert.alert(t('kraniBuah.alert.restan.titleToday'), message);
     } finally {
       await db.end();
     }
-  }, []);
+  }, [t]);
 
   const showValidateLoad = useCallback(async () => {
     const db = await getDbClient();
@@ -140,26 +146,30 @@ export default function KraniBuahDashboard() {
       );
 
       if (!rows?.length) {
-        Alert.alert('Validasi Muatan', 'Tidak ada data approved yang siap dimuat hari ini.');
+        Alert.alert(t('kraniBuah.alert.validate.title'), t('kraniBuah.alert.validate.noData'));
         return;
       }
 
       const totalJanjang = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_janjang) || 0), 0);
       const totalKg = (rows as any[]).reduce((sum, r) => sum + (Number(r.total_kg) || 0), 0);
       const message = [
-        `Total Siap Muat: ${totalJanjang} JJG • ${totalKg} Kg`,
+        t('kraniBuah.alert.validate.total', { jjg: totalJanjang, kg: totalKg }),
         '',
-        ...(rows as any[]).map((r) => `• ${r.blok_name}: ${r.total_janjang} JJG • ${Number(r.total_kg) || 0} Kg`),
+        ...(rows as any[]).map((r) => t('kraniBuah.alert.validate.listItem', { 
+          block: r.blok_name, 
+          jjg: r.total_janjang, 
+          kg: Number(r.total_kg) || 0 
+        })),
       ].join('\n');
 
-      Alert.alert('Validasi Muatan (Hari Ini)', message, [
-        { text: 'Tutup', style: 'cancel' },
-        { text: 'Buat SPB', onPress: () => router.push('../create-spb') },
+      Alert.alert(t('kraniBuah.alert.validate.titleToday'), message, [
+        { text: t('kraniBuah.alert.buttons.close'), style: 'cancel' },
+        { text: t('kraniBuah.alert.buttons.createSpb'), onPress: () => router.push('../create-spb') },
       ]);
     } finally {
       await db.end();
     }
-  }, [router]);
+  }, [router, t]);
 
   useFocusEffect(
     useCallback(() => {
@@ -172,8 +182,11 @@ export default function KraniBuahDashboard() {
       case 'create-spb':
         router.push('../create-spb');
         break;
+      case 'spb-report':
+        router.push('/spb-report');
+        break;
       case 'truck-data':
-        void showTruckData();
+        router.push('../spb-list');
         break;
       case 'validate-load':
         void showValidateLoad();
@@ -189,32 +202,40 @@ export default function KraniBuahDashboard() {
   const menuItems = [
     {
       id: '1',
-      title: 'Buat SPB',
-      description: 'Generate Surat Pengantar Barang',
+      title: t('kraniBuah.menu.createSpb.title'),
+      description: t('kraniBuah.menu.createSpb.desc'),
       icon: FileText,
       color: '#2d5016',
       action: 'create-spb',
     },
     {
+      id: '5',
+      title: t('kraniBuah.menu.spbReport.title'),
+      description: t('kraniBuah.menu.spbReport.desc'),
+      icon: FileText,
+      color: '#1e3a8a', // Blue color to distinguish
+      action: 'spb-report',
+    },
+    {
       id: '2',
-      title: 'Data Truk',
-      description: 'Input nomor polisi & driver',
+      title: t('kraniBuah.menu.truckData.title'),
+      description: t('kraniBuah.menu.truckData.desc'),
       icon: Truck,
       color: '#4a7c23',
       action: 'truck-data',
     },
     {
       id: '3',
-      title: 'Validasi Muatan',
-      description: 'Hitung janjang per blok',
+      title: t('kraniBuah.menu.validateLoad.title'),
+      description: t('kraniBuah.menu.validateLoad.desc'),
       icon: ClipboardCheck,
       color: '#6ba82e',
       action: 'validate-load',
     },
     {
       id: '4',
-      title: 'Cek Restan',
-      description: 'Monitoring buah tertinggal',
+      title: t('kraniBuah.menu.checkRestan.title'),
+      description: t('kraniBuah.menu.checkRestan.desc'),
       icon: AlertTriangle,
       color: '#f57c00',
       action: 'check-restan',
@@ -224,30 +245,30 @@ export default function KraniBuahDashboard() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.greeting}>Selamat Datang,</Text>
+        <Text style={styles.greeting}>{t('common.welcome')}</Text>
         <Text style={styles.name}>{profile?.full_name}</Text>
         <View style={styles.roleTag}>
-          <Text style={styles.roleText}>Krani Buah / Transport</Text>
+          <Text style={styles.roleText}>{t('kraniBuah.role')}</Text>
         </View>
       </View>
 
       <View style={styles.statsContainer}>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>{statsLoading ? '-' : stats.spbToday}</Text>
-          <Text style={styles.statLabel}>SPB Hari Ini</Text>
+          <Text style={styles.statLabel}>{t('kraniBuah.stats.spbToday')}</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>{statsLoading ? '-' : stats.shippedToday}</Text>
-          <Text style={styles.statLabel}>Truk Terkirim</Text>
+          <Text style={styles.statLabel}>{t('kraniBuah.stats.shippedToday')}</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>{statsLoading ? '-' : stats.restanToday}</Text>
-          <Text style={styles.statLabel}>Restan</Text>
+          <Text style={styles.statLabel}>{t('kraniBuah.stats.restan')}</Text>
         </View>
       </View>
 
       <View style={styles.menuContainer}>
-        <Text style={styles.sectionTitle}>Menu Utama</Text>
+        <Text style={styles.sectionTitle}>{t('kraniBuah.menu.title')}</Text>
         {menuItems.map((item) => (
           <TouchableOpacity
             key={item.id}
@@ -268,10 +289,9 @@ export default function KraniBuahDashboard() {
       <View style={styles.alertCard}>
         <AlertTriangle size={20} color="#f57c00" />
         <View style={styles.alertContent}>
-          <Text style={styles.alertTitle}>Perhatian!</Text>
+          <Text style={styles.alertTitle}>{t('kraniBuah.alert.attention')}</Text>
           <Text style={styles.alertText}>
-            Pastikan semua janjang yang sudah di-approve dibuatkan SPB sebelum akhir hari untuk
-            menghindari restan.
+            {t('kraniBuah.alert.attentionText')}
           </Text>
         </View>
       </View>
