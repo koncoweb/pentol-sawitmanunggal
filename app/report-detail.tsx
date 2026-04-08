@@ -9,12 +9,15 @@ import {
   Modal,
   ActivityIndicator,
   TextInput,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
-import { ArrowLeft, Calendar, Filter, Image as ImageIcon, X, Download } from 'lucide-react-native';
+import { ArrowLeft, Calendar, Filter, Image as ImageIcon, X, Download, ChevronDown, ChevronUp, WifiOff } from 'lucide-react-native';
 import { getDbClient } from '@/lib/db';
 import { useAuth } from '@/contexts/AuthContext';
+import { runQuery, useOfflineData, syncHarvestQueue } from '@/lib/offline';
 import ExportModal from '@/components/ExportModal';
+import * as FileSystem from 'expo-file-system';
 
 type HarvestRecord = {
   id: string;
@@ -42,6 +45,7 @@ type HarvestRecord = {
   keterangan: string;
   foto_url: string | null;
   created_by_name: string;
+  is_local?: boolean;
 };
 
 const HarvestImage = ({ url, onPress }: { url: string | null, onPress: () => void }) => {
@@ -92,143 +96,72 @@ export default function ReportDetailScreen() {
   const [records, setRecords] = useState<HarvestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterDivisi, setFilterDivisi] = useState<string>('');
-  const [filterDate, setFilterDate] = useState<string>('');
+  
+  // New Filter States
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null); // null means all months
+  const [selectedDay, setSelectedDay] = useState<number | null>(null); // null means all days
+  
   const [showFilters, setShowFilters] = useState(false);
+  const [activePicker, setActivePicker] = useState<'year' | 'month' | 'day' | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<HarvestRecord | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const months = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+  ];
+
+  const years = [2024, 2025, 2026, 2027];
 
   useEffect(() => {
-    console.log('ReportDetailScreen mounted v2 (Neon DB Photo Display)');
+    console.log('ReportDetailScreen mounted v3 (Enhanced Filters)');
     loadReportData();
-  }, [reportType]);
+  }, [reportType, selectedYear, selectedMonth, selectedDay]);
 
   const loadReportData = async () => {
     try {
       setLoading(true);
+      setError(null);
 
-      // Calculate date range based on report type
-      const today = new Date();
-      let startDate = new Date();
-      startDate.setHours(0, 0, 0, 0);
+      let allRecords: HarvestRecord[] = [];
 
-      switch (reportType) {
-        case 'daily':
-          startDate.setDate(today.getDate() - 1); // Last 24h + today
-          break;
-        case 'weekly':
-          startDate.setDate(today.getDate() - 7);
-          break;
-        case 'monthly':
-          startDate.setMonth(today.getMonth() - 1);
-          break;
-        default:
-          startDate.setDate(today.getDate() - 30); // Default to 30 days instead of 7 to show more data
-      }
+      // 1. Fetch Local Pending Records (SQLite)
+      try {
+        const localRows = await runQuery(`
+          SELECT 
+            q.*, 
+            d.name as divisi_name, 
+            d.estate_name,
+            b.name as blok_name,
+            p.operator_code,
+            p.name as pemanen_name,
+            t.nomor_tph
+          FROM harvest_records_queue q
+          LEFT JOIN divisi d ON q.divisi_id = d.id
+          LEFT JOIN blok b ON q.blok_id = b.id
+          LEFT JOIN pemanen p ON q.pemanen_id = p.id
+          LEFT JOIN tph t ON q.tph_id = t.id
+          WHERE q.status != 'synced'
+        `);
 
-      const db = await getDbClient();
-      
-      const query = `
-        SELECT
-          hr.id,
-          hr.tanggal,
-          hr.created_at,
-          d.name as divisi_name,
-          d.estate_name,
-          g.name as gang_name,
-          b.name as blok_name,
-          p.nik as operator_code,
-          p.name as pemanen_name,
-          hr.rotasi,
-          hr.nomor_panen,
-          hr.jumlah_jjg as hasil_panen_jjg,
-          t.name as nomor_tph,
-          hr.bjr,
-          hr.jumlah_brondolan_kg,
-          hr.buah_masak,
-          hr.buah_mentah,
-          hr.buah_mengkal,
-          hr.overripe,
-          hr.abnormal,
-          hr.buah_busuk,
-          hr.tangkai_panjang,
-          hr.jangkos,
-          hr.keterangan,
-          hr.foto_url,
-          pr.full_name as created_by_name
-        FROM harvest_records hr
-        LEFT JOIN divisi d ON hr.divisi_id = d.id
-        LEFT JOIN blok b ON hr.blok_id = b.id
-        LEFT JOIN pemanen p ON hr.pemanen_id = p.id
-        LEFT JOIN gang g ON p.gang_id = g.id
-        LEFT JOIN tph t ON hr.tph_id = t.id
-        LEFT JOIN profiles pr ON hr.created_by = pr.id
-        WHERE hr.tanggal >= $1
-        ORDER BY hr.tanggal DESC, hr.created_at DESC
-        LIMIT 500
-      `;
-
-      // Use YYYY-MM-DD format for date comparison to avoid timezone issues
-      const dateParam = startDate.toISOString().split('T')[0];
-      console.log('Fetching report data from:', dateParam);
-      
-      const { rows } = await db.query(query, [dateParam]);
-
-      // Process photos from Neon DB
-      const photoIds = rows
-        .map((r: any) => r.foto_url)
-        .filter((url: string | null) => url && url.startsWith('db-photo://'))
-        .map((url: string) => url.replace('db-photo://', ''));
-
-      const photoMap = new Map<string, string>();
-      
-      if (photoIds.length > 0) {
-        try {
-          console.log(`Fetching ${photoIds.length} photos from DB...`);
-          // Fetch photos
-          const photoQuery = `
-            SELECT id, photo_data 
-            FROM harvest_photos 
-            WHERE id = ANY($1::uuid[])
-          `;
-          const photoResult = await db.query(photoQuery, [photoIds]);
-          
-          photoResult.rows.forEach((row: any) => {
-            if (row.photo_data) {
-                // Check if it already has prefix, if not add it
-                const prefix = row.photo_data.startsWith('data:') ? '' : 'data:image/jpeg;base64,';
-                photoMap.set(row.id, `${prefix}${row.photo_data}`);
-            }
-          });
-        } catch (err) {
-            console.error('Error fetching photos:', err);
-        }
-      }
-
-      await db.end();
-
-      const formattedRecords: HarvestRecord[] = rows.map((row: any) => {
-        let finalPhotoUrl = row.foto_url;
-        if (finalPhotoUrl && finalPhotoUrl.startsWith('db-photo://')) {
-            const id = finalPhotoUrl.replace('db-photo://', '');
-            finalPhotoUrl = photoMap.get(id) || null;
-        }
-
-        return {
-          id: row.id,
-          tanggal: typeof row.tanggal === 'string' ? row.tanggal : new Date(row.tanggal).toISOString(),
-          created_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
-          divisi_name: row.divisi_name || '-',
-          estate_name: row.estate_name || 'Unknown Estate',
-          gang_name: row.gang_name || '-',
+        const formattedLocal: HarvestRecord[] = localRows.map((row: any) => ({
+          id: `local-${row.local_id}`,
+          tanggal: row.tanggal,
+          created_at: row.created_at || new Date().toISOString(),
+          divisi_name: row.divisi_name || 'Local Divisi',
+          estate_name: row.estate_name || 'Local Estate',
+          gang_name: '-',
           blok_names: [row.blok_name || '-'],
           pemanen_details: [{ operator_code: row.operator_code || '-', name: row.pemanen_name || '-' }],
           rotasi: row.rotasi,
           nomor_panen: row.nomor_panen ? parseInt(row.nomor_panen) : 0,
-          hasil_panen_jjg: row.hasil_panen_jjg || 0,
+          hasil_panen_jjg: row.jumlah_jjg || 0,
           nomor_tph: row.nomor_tph || row.nomor_panen || '-',
           bjr: row.bjr || 0,
-          jumlah_brondolan_kg: parseFloat(row.jumlah_brondolan_kg) || 0,
+          jumlah_brondolan_kg: row.jumlah_brondolan_kg || 0,
           buah_masak: row.buah_masak || 0,
           buah_mentah: row.buah_mentah || 0,
           buah_mengkal: row.buah_mengkal || 0,
@@ -238,17 +171,156 @@ export default function ReportDetailScreen() {
           tangkai_panjang: row.tangkai_panjang || 0,
           jangkos: row.jangkos || 0,
           keterangan: row.keterangan || '-',
-          foto_url: finalPhotoUrl,
-          created_by_name: row.created_by_name || 'Unknown',
-        };
-      });
+          foto_url: row.foto_path || null,
+          created_by_name: 'Me (Offline)',
+          is_local: true,
+        }));
+        allRecords = [...formattedLocal];
+      } catch (localErr) {
+        console.error('Error fetching local records:', localErr);
+      }
 
-      setRecords(formattedRecords);
+      // 2. Fetch Remote Records (NeonDB)
+      try {
+        const db = await getDbClient();
+        
+        let whereClause = 'WHERE 1=1';
+        const queryParams: any[] = [];
+        let paramIdx = 1;
+
+        // Filter by Year
+        whereClause += ` AND EXTRACT(YEAR FROM hr.tanggal) = $${paramIdx++}`;
+        queryParams.push(selectedYear);
+
+        // Filter by Month (if selected)
+        if (selectedMonth !== null) {
+          whereClause += ` AND EXTRACT(MONTH FROM hr.tanggal) = $${paramIdx++}`;
+          queryParams.push(selectedMonth + 1);
+        }
+
+        // Filter by Day (if selected)
+        if (selectedDay !== null) {
+          whereClause += ` AND EXTRACT(DAY FROM hr.tanggal) = $${paramIdx++}`;
+          queryParams.push(selectedDay);
+        }
+
+        if (selectedMonth === null && selectedDay === null) {
+          if (reportType === 'daily') {
+            whereClause += ` AND hr.tanggal = CURRENT_DATE`;
+          } else if (reportType === 'weekly') {
+            whereClause += ` AND hr.tanggal >= CURRENT_DATE - INTERVAL '7 days'`;
+          } else if (reportType === 'monthly') {
+            whereClause += ` AND EXTRACT(MONTH FROM hr.tanggal) = EXTRACT(MONTH FROM CURRENT_DATE)`;
+          }
+        }
+        
+        const query = `
+          SELECT
+            hr.id, hr.tanggal, hr.created_at, d.name as divisi_name, d.estate_name,
+            g.name as gang_name, b.name as blok_name, p.nik as operator_code,
+            p.name as pemanen_name, hr.rotasi, hr.nomor_panen, hr.jumlah_jjg as hasil_panen_jjg,
+            t.name as nomor_tph, hr.bjr, hr.jumlah_brondolan_kg, hr.buah_masak,
+            hr.buah_mentah, hr.buah_mengkal, hr.overripe, hr.abnormal, hr.buah_busuk,
+            hr.tangkai_panjang, hr.jangkos, hr.keterangan, hr.foto_url,
+            pr.full_name as created_by_name
+          FROM harvest_records hr
+          LEFT JOIN divisi d ON hr.divisi_id = d.id
+          LEFT JOIN blok b ON hr.blok_id = b.id
+          LEFT JOIN pemanen p ON hr.pemanen_id = p.id
+          LEFT JOIN gang g ON p.gang_id = g.id
+          LEFT JOIN tph t ON hr.tph_id = t.id
+          LEFT JOIN profiles pr ON hr.created_by = pr.id
+          ${whereClause}
+          ORDER BY hr.tanggal DESC, hr.created_at DESC
+          LIMIT 1000
+        `;
+
+        const { rows } = await db.query(query, queryParams);
+
+        // Process photos
+        const photoIds = rows
+          .map((r: any) => r.foto_url)
+          .filter((url: string | null) => url && url.startsWith('db-photo://'))
+          .map((url: string) => url.replace('db-photo://', ''));
+
+        const photoMap = new Map<string, string>();
+        if (photoIds.length > 0) {
+          const photoQuery = `SELECT id, photo_data FROM harvest_photos WHERE id = ANY($1::uuid[])`;
+          const photoResult = await db.query(photoQuery, [photoIds]);
+          photoResult.rows.forEach((row: any) => {
+            if (row.photo_data) {
+              const prefix = row.photo_data.startsWith('data:') ? '' : 'data:image/jpeg;base64,';
+              photoMap.set(row.id, `${prefix}${row.photo_data}`);
+            }
+          });
+        }
+
+        await db.end();
+
+        const formattedRemote: HarvestRecord[] = rows.map((row: any) => {
+          let finalPhotoUrl = row.foto_url;
+          if (finalPhotoUrl && finalPhotoUrl.startsWith('db-photo://')) {
+              const id = finalPhotoUrl.replace('db-photo://', '');
+              finalPhotoUrl = photoMap.get(id) || null;
+          }
+
+          return {
+            id: row.id,
+            tanggal: typeof row.tanggal === 'string' ? row.tanggal : new Date(row.tanggal).toISOString(),
+            created_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
+            divisi_name: row.divisi_name || '-',
+            estate_name: row.estate_name || 'Unknown Estate',
+            gang_name: row.gang_name || '-',
+            blok_names: [row.blok_name || '-'],
+            pemanen_details: [{ operator_code: row.operator_code || '-', name: row.pemanen_name || '-' }],
+            rotasi: row.rotasi,
+            nomor_panen: row.nomor_panen ? parseInt(row.nomor_panen) : 0,
+            hasil_panen_jjg: row.hasil_panen_jjg || 0,
+            nomor_tph: row.nomor_tph || row.nomor_panen || '-',
+            bjr: row.bjr || 0,
+            jumlah_brondolan_kg: parseFloat(row.jumlah_brondolan_kg) || 0,
+            buah_masak: row.buah_masak || 0,
+            buah_mentah: row.buah_mentah || 0,
+            buah_mengkal: row.buah_mengkal || 0,
+            overripe: row.overripe || 0,
+            abnormal: row.abnormal || 0,
+            buah_busuk: row.buah_busuk || 0,
+            tangkai_panjang: row.tangkai_panjang || 0,
+            jangkos: row.jangkos || 0,
+            keterangan: row.keterangan || '-',
+            foto_url: finalPhotoUrl,
+            created_by_name: row.created_by_name || 'Unknown',
+            is_local: false,
+          };
+        });
+
+        allRecords = [...allRecords, ...formattedRemote];
+      } catch (remoteErr: any) {
+        console.log('Remote fetch failed (probably offline):', remoteErr.message);
+        // If we have no records at all and remote failed, show error
+        if (allRecords.length === 0) {
+            setError('Gagal memuat data dari server. Menampilkan data lokal jika ada.');
+        }
+      }
+
+      setRecords(allRecords);
     } catch (error: any) {
       console.error('Error loading report data:', error);
       setError(error.message || 'Gagal memuat data laporan');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await syncHarvestQueue();
+      await loadReportData();
+    } catch (err) {
+      console.error('Manual refresh sync failed:', err);
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -291,18 +363,15 @@ export default function ReportDetailScreen() {
     }
   };
 
-  const filteredRecords = records.filter(record => {
+  const filteredRecords = records.filter((record: HarvestRecord) => {
     if (filterDivisi && !record.divisi_name.toLowerCase().includes(filterDivisi.toLowerCase())) {
-      return false;
-    }
-    if (filterDate && !formatDate(record.tanggal).includes(filterDate)) {
       return false;
     }
     return true;
   });
 
   const totals = useMemo(() => {
-    return filteredRecords.reduce((acc, record) => ({
+    return filteredRecords.reduce((acc: any, record: HarvestRecord) => ({
       hasil_panen_jjg: acc.hasil_panen_jjg + (record.hasil_panen_jjg || 0),
       jumlah_brondolan_kg: acc.jumlah_brondolan_kg + (record.jumlah_brondolan_kg || 0),
       buah_masak: acc.buah_masak + (record.buah_masak || 0),
@@ -344,20 +413,147 @@ export default function ReportDetailScreen() {
 
       {showFilters && (
         <View style={styles.filterContainer}>
+          <View style={styles.filterHeader}>
+            <Text style={styles.filterTitle}>Filter Laporan</Text>
+            <TouchableOpacity onPress={() => setShowFilters(false)}>
+              <ChevronUp size={20} color="#666" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.filterLabel}>Divisi</Text>
           <TextInput
             style={styles.input}
-            placeholder="Filter Divisi..."
+            placeholder="Ketik nama divisi..."
             value={filterDivisi}
             onChangeText={setFilterDivisi}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Filter Tanggal (DD/MM/YYYY)..."
-            value={filterDate}
-            onChangeText={setFilterDate}
-          />
+
+          <View style={styles.dropdownRow}>
+            <View style={styles.dropdownCol}>
+              <Text style={styles.filterLabel}>Tahun</Text>
+              <TouchableOpacity 
+                style={styles.dropdownButton} 
+                onPress={() => setActivePicker('year')}
+              >
+                <Text style={styles.dropdownButtonText}>{selectedYear}</Text>
+                <ChevronDown size={16} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.dropdownCol}>
+              <Text style={styles.filterLabel}>Bulan</Text>
+              <TouchableOpacity 
+                style={styles.dropdownButton} 
+                onPress={() => setActivePicker('month')}
+              >
+                <Text style={styles.dropdownButtonText}>
+                  {selectedMonth !== null ? months[selectedMonth] : 'Semua'}
+                </Text>
+                <ChevronDown size={16} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.dropdownCol}>
+              <Text style={styles.filterLabel}>Tanggal</Text>
+              <TouchableOpacity 
+                style={styles.dropdownButton} 
+                onPress={() => setActivePicker('day')}
+              >
+                <Text style={styles.dropdownButtonText}>
+                  {selectedDay !== null ? selectedDay : 'Semua'}
+                </Text>
+                <ChevronDown size={16} color="#666" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <TouchableOpacity 
+            style={styles.resetButton}
+            onPress={() => {
+              setSelectedYear(new Date().getFullYear());
+              setSelectedMonth(null);
+              setSelectedDay(null);
+              setFilterDivisi('');
+            }}
+          >
+            <Text style={styles.resetButtonText}>Reset Filter</Text>
+          </TouchableOpacity>
         </View>
       )}
+
+      {/* Custom Picker Modal */}
+      <Modal
+        visible={activePicker !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setActivePicker(null)}
+      >
+        <TouchableOpacity 
+          style={styles.pickerModalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setActivePicker(null)}
+        >
+          <View style={styles.pickerModalContent}>
+            <View style={styles.pickerModalHeader}>
+              <Text style={styles.pickerModalTitle}>
+                Pilih {activePicker === 'year' ? 'Tahun' : activePicker === 'month' ? 'Bulan' : 'Tanggal'}
+              </Text>
+              <TouchableOpacity onPress={() => setActivePicker(null)}>
+                <X size={24} color="#333" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.pickerList}>
+              {activePicker === 'year' && years.map(year => (
+                <TouchableOpacity 
+                  key={year} 
+                  style={[styles.pickerItem, selectedYear === year && styles.pickerItemActive]}
+                  onPress={() => { setSelectedYear(year); setActivePicker(null); }}
+                >
+                  <Text style={[styles.pickerItemText, selectedYear === year && styles.pickerItemTextActive]}>{year}</Text>
+                </TouchableOpacity>
+              ))}
+              {activePicker === 'month' && (
+                <>
+                  <TouchableOpacity 
+                    style={[styles.pickerItem, selectedMonth === null && styles.pickerItemActive]}
+                    onPress={() => { setSelectedMonth(null); setActivePicker(null); }}
+                  >
+                    <Text style={[styles.pickerItemText, selectedMonth === null && styles.pickerItemTextActive]}>Semua Bulan</Text>
+                  </TouchableOpacity>
+                  {months.map((month, idx) => (
+                    <TouchableOpacity 
+                      key={month} 
+                      style={[styles.pickerItem, selectedMonth === idx && styles.pickerItemActive]}
+                      onPress={() => { setSelectedMonth(idx); setActivePicker(null); }}
+                    >
+                      <Text style={[styles.pickerItemText, selectedMonth === idx && styles.pickerItemTextActive]}>{month}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+              {activePicker === 'day' && (
+                <>
+                  <TouchableOpacity 
+                    style={[styles.pickerItem, selectedDay === null && styles.pickerItemActive]}
+                    onPress={() => { setSelectedDay(null); setActivePicker(null); }}
+                  >
+                    <Text style={[styles.pickerItemText, selectedDay === null && styles.pickerItemTextActive]}>Semua Tanggal</Text>
+                  </TouchableOpacity>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                    <TouchableOpacity 
+                      key={day} 
+                      style={[styles.pickerItem, selectedDay === day && styles.pickerItemActive]}
+                      onPress={() => { setSelectedDay(day); setActivePicker(null); }}
+                    >
+                      <Text style={[styles.pickerItemText, selectedDay === day && styles.pickerItemTextActive]}>{day}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -379,7 +575,13 @@ export default function ReportDetailScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <ScrollView style={styles.content}>
+        <ScrollView 
+          style={styles.content}
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
             <ScrollView horizontal showsHorizontalScrollIndicator={true}>
               <View>
                 <View style={styles.tableHeader}>
@@ -409,8 +611,16 @@ export default function ReportDetailScreen() {
                 ) : (
                   <>
                     {filteredRecords.map((record, index) => (
-                      <View key={record.id} style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlt]}>
-                        <Text style={[styles.tableCell, { width: 100 }]}>{formatDate(record.tanggal)}</Text>
+                      <View key={record.id} style={[styles.tableRow, index % 2 === 1 && styles.tableRowAlt, record.is_local && { backgroundColor: '#fffde7' }]}>
+                        <View style={[styles.tableCell, { width: 100, flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center' }]}>
+                          <Text style={{ fontSize: 12 }}>{formatDate(record.tanggal)}</Text>
+                          {record.is_local && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                              <WifiOff size={10} color="#f57c00" />
+                              <Text style={{ fontSize: 8, color: '#f57c00', fontWeight: 'bold', marginLeft: 2 }}>PENDING SYNC</Text>
+                            </View>
+                          )}
+                        </View>
                         <Text style={[styles.tableCell, { width: 120 }]}>{record.divisi_name}</Text>
                         <Text style={[styles.tableCell, { width: 100 }]}>{record.gang_name}</Text>
                         <Text style={[styles.tableCell, { width: 100 }]}>{record.blok_names.join(', ')}</Text>
@@ -553,9 +763,110 @@ const styles = StyleSheet.create({
   filterContainer: {
     backgroundColor: '#fff',
     padding: 16,
-    gap: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  filterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  filterTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  filterLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  dropdownRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  dropdownCol: {
+    flex: 1,
+  },
+  dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f5f5f5',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  dropdownButtonText: {
+    fontSize: 13,
+    color: '#333',
+  },
+  pickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  pickerModalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 40,
+  },
+  pickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  pickerModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  pickerList: {
+    padding: 10,
+  },
+  pickerItem: {
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  pickerItemActive: {
+    backgroundColor: '#e8f5e9',
+  },
+  pickerItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  pickerItemTextActive: {
+    color: '#2d5016',
+    fontWeight: 'bold',
+  },
+  resetButton: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#ffebee',
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    color: '#e53935',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
   input: {
     backgroundColor: '#f5f5f5',
@@ -563,10 +874,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e0e0e0',
+    marginBottom: 8,
   },
   content: {
     flex: 1,
+  },
+  scrollContent: {
     padding: 16,
+    paddingBottom: 150, // Menambah jarak bawah agar baris TOTAL tidak tertutup tombol download
   },
   loadingContainer: {
     flex: 1,
@@ -586,21 +901,21 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#2d5016',
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderTopLeftRadius: 8,
     borderTopRightRadius: 8,
   },
   tableHeaderCell: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 14,
-    paddingHorizontal: 8,
+    fontSize: 12,
+    paddingHorizontal: 4,
     textAlign: 'left',
   },
   tableRow: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    paddingVertical: 8,
+    paddingVertical: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
     alignItems: 'center',
@@ -609,14 +924,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9f9f9',
   },
   tableCell: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#333',
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     textAlign: 'left',
   },
   thumbnail: {
-    width: 40,
-    height: 40,
+    width: 30,
+    height: 30,
     borderRadius: 4,
     backgroundColor: '#eee',
   },

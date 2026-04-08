@@ -18,7 +18,9 @@ import { getDbClient } from '@/lib/db';
 import { useOfflineData, runCommand, syncHarvestQueue, syncMasterData } from '@/lib/offline';
 import { ChevronLeft, Save, X, Check, Calendar, Image as ImageIcon, WifiOff } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Directory, File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system';
+import NetInfo from '@react-native-community/netinfo';
+
 import { useTranslation } from 'react-i18next';
 import Dropdown from '@/components/Dropdown';
 import MultiSelectDropdown from '@/components/MultiSelectDropdown';
@@ -80,9 +82,51 @@ export default function InputPanenScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    // Attempt sync on mount
-    syncMasterData().catch(err => console.error('Background sync master failed:', err));
-    syncHarvestQueue().catch(err => console.error('Background sync queue failed:', err));
+    // Initial sync
+    const performInitialSync = async () => {
+      try {
+        await syncMasterData();
+        console.log('Initial master data sync complete');
+        // Refresh local lists after sync
+        loadDivisiList();
+        if (formData.divisi_id) {
+          loadDivisiData(formData.divisi_id);
+        }
+      } catch (err) {
+        console.error('Initial sync master failed:', err);
+      }
+      
+      try {
+        await syncHarvestQueue();
+      } catch (err) {
+        console.error('Initial sync queue failed:', err);
+      }
+    };
+
+    performInitialSync();
+
+    // Trigger sync when connection is restored
+    const unsubscribeNet = NetInfo.addEventListener((state: any) => {
+      if (state.isConnected) {
+        console.log('Connection restored, triggering sync...');
+        syncHarvestQueue().catch(err => console.error('Auto-sync after reconnect failed:', err));
+      }
+    });
+
+    // Set up periodic sync every 5 minutes
+    const syncInterval = setInterval(async () => {
+      const state = await NetInfo.fetch();
+      if (state.isConnected) {
+        console.log('Performing periodic background sync...');
+        syncMasterData().catch(err => console.error('Periodic master sync failed:', err));
+        syncHarvestQueue().catch(err => console.error('Periodic queue sync failed:', err));
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => {
+      clearInterval(syncInterval);
+      unsubscribeNet();
+    };
   }, []);
 
   const dataCache = useRef<Record<string, {
@@ -228,6 +272,75 @@ export default function InputPanenScreen() {
     }
   };
 
+  const saveToOfflineQueue = async (finalBlokIds: string[], userId: string) => {
+    const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
+    const bjr = parseInt(formData.bjr) || 0;
+    const bjd = jjg * bjr;
+    
+    let localPhotoPath = null;
+    if (photoUri) {
+        try {
+            const filename = photoUri.split('/').pop() || `photo_${Date.now()}.jpg`;
+            const harvestDir = ((FileSystem as any).documentDirectory || '') + 'harvest_photos/';
+            
+            const dirInfo = await FileSystem.getInfoAsync(harvestDir);
+            if (!dirInfo.exists) {
+                await FileSystem.makeDirectoryAsync(harvestDir, { intermediates: true });
+            }
+            
+            const destPath = harvestDir + filename;
+            await FileSystem.copyAsync({
+                from: photoUri,
+                to: destPath
+            });
+            
+            localPhotoPath = destPath;
+            console.log('Photo saved to local storage:', localPhotoPath);
+        } catch (photoError) {
+            console.error('Error saving photo to local storage:', photoError);
+        }
+    }
+
+    for (const blokId of finalBlokIds) {
+         await runCommand(`
+             INSERT INTO harvest_records_queue (
+                 tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
+                 hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
+                 overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
+                 keterangan, status, created_by, nomor_panen, jumlah_jjg,
+                 foto_path, jumlah_brondolan_kg
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         `, [
+             formData.tanggal,
+             formData.divisi_id,
+             blokId,
+             formData.pemanen_id,
+             formData.tph_id || null,
+             parseInt(formData.rotasi),
+             bjd,
+             bjr,
+             parseInt(formData.buah_masak) || 0,
+             parseInt(formData.buah_mentah) || 0,
+             parseInt(formData.buah_mengkal) || 0,
+             parseInt(formData.overripe) || 0,
+             parseInt(formData.abnormal) || 0,
+             parseInt(formData.buah_busuk) || 0,
+             parseInt(formData.tangkai_panjang) || 0,
+             parseInt(formData.jangkos) || 0,
+             formData.keterangan || null,
+             'pending',
+             userId,
+             formData.nomor_panen,
+             jjg,
+             localPhotoPath,
+             parseFloat(formData.jumlah_brondolan_kg) || 0
+         ]);
+    }
+    
+    setSuccessMessage(`${finalBlokIds.length} ${t('input.success.offlineSaved')}`);
+    setShowSuccessModal(true);
+  };
+
   const handleSubmit = async () => {
     if (!formData.divisi_id) {
       Alert.alert(t('common.error'), t('input.error.selectDivision'));
@@ -271,143 +384,95 @@ export default function InputPanenScreen() {
         throw new Error(t('input.error.sessionLost'));
       }
 
+      // Check if actually online by attempting to get the DB client
       if (isOffline) {
-        const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
-        const bjr = parseInt(formData.bjr) || 0;
-        const bjd = jjg * bjr;
-        
-        let localPhotoPath = null;
-        if (photoUri) {
-            const filename = photoUri.split('/').pop();
-            const harvestDir = new Directory(Paths.document, 'harvest_photos');
-            if (!harvestDir.exists) {
-                harvestDir.create({ intermediates: true });
-            }
-            
-            const sourceFile = new File(photoUri);
-            const destFile = new File(harvestDir, filename || 'temp.jpg');
-            sourceFile.copy(destFile);
-            localPhotoPath = destFile.uri;
-        }
-
-        for (const blokId of finalBlokIds) {
-             await runCommand(`
-                 INSERT INTO harvest_records_queue (
-                     tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
-                     hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
-                     overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
-                     keterangan, status, created_by, nomor_panen, jumlah_jjg,
-                     foto_path, jumlah_brondolan_kg
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             `, [
-                 formData.tanggal,
-                 formData.divisi_id,
-                 blokId,
-                 formData.pemanen_id,
-                 formData.tph_id || null,
-                 parseInt(formData.rotasi),
-                 bjd,
-                 bjr,
-                 parseInt(formData.buah_masak) || 0,
-                 parseInt(formData.buah_mentah) || 0,
-                 parseInt(formData.buah_mengkal) || 0,
-                 parseInt(formData.overripe) || 0,
-                 parseInt(formData.abnormal) || 0,
-                 parseInt(formData.buah_busuk) || 0,
-                 parseInt(formData.tangkai_panjang) || 0,
-                 parseInt(formData.jangkos) || 0,
-                 formData.keterangan || null,
-                 'pending',
-                 userId,
-                 formData.nomor_panen,
-                 jjg,
-                 localPhotoPath,
-                 parseFloat(formData.jumlah_brondolan_kg) || 0
-             ]);
-        }
-        
-        setSuccessMessage(`${finalBlokIds.length} ${t('input.success.offlineSaved')}`);
-        setShowSuccessModal(true);
+        console.log('App is in offline mode, saving to local queue...');
+        await saveToOfflineQueue(finalBlokIds, userId);
         setLoading(false);
         return;
       }
 
-      let uploadedPhotoUrl = null;
-      if (photoUri) {
-        setUploadingPhoto(true);
-        uploadedPhotoUrl = await uploadPhotoToStorage(photoUri);
-        setUploadingPhoto(false);
-        
-        if (!uploadedPhotoUrl) {
-            // Continue without photo if upload fails, but warn user? 
-            // Or maybe just log it. For now let's just log.
-            console.warn('Photo upload failed or returned null');
+      // Try Online Submission
+      try {
+        let uploadedPhotoUrl = null;
+        if (photoUri) {
+          setUploadingPhoto(true);
+          uploadedPhotoUrl = await uploadPhotoToStorage(photoUri);
+          setUploadingPhoto(false);
+          
+          if (!uploadedPhotoUrl) {
+              console.warn('Photo upload failed or returned null');
+          }
         }
+
+        console.log('Connecting to database...');
+        const db = await getDbClient();
+        console.log('Database connected');
+        
+        await db.query('BEGIN');
+        
+        const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
+        const bjr = parseInt(formData.bjr) || 0;
+        const bjd = jjg * bjr; // Calculate total weight based on JJG * BJR
+        const totalRecords = finalBlokIds.length;
+        let insertedCount = 0;
+
+        console.log(`Preparing to insert ${totalRecords} records...`);
+
+        for (const blokId of finalBlokIds) {
+             await db.query(`
+               INSERT INTO harvest_records (
+                  tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
+                  hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
+                  overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
+                  keterangan, status, created_by, nomor_panen, jumlah_jjg,
+                  foto_url, jumlah_brondolan_kg
+               ) VALUES (
+                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+                  $22, $23
+               )
+             `, [
+               formData.tanggal,
+               formData.divisi_id, 
+               blokId,
+               formData.pemanen_id,
+               formData.tph_id || null,
+               parseInt(formData.rotasi),
+               bjd, 
+               bjr,
+               parseInt(formData.buah_masak) || 0,
+               parseInt(formData.buah_mentah) || 0,
+               parseInt(formData.buah_mengkal) || 0,
+               parseInt(formData.overripe) || 0,
+               parseInt(formData.abnormal) || 0,
+               parseInt(formData.buah_busuk) || 0,
+               parseInt(formData.tangkai_panjang) || 0,
+               parseInt(formData.jangkos) || 0,
+               formData.keterangan || null,
+               'submitted',
+               userId,
+               formData.nomor_panen,
+               jjg, 
+               uploadedPhotoUrl,
+               parseFloat(formData.jumlah_brondolan_kg) || 0
+             ]);
+             insertedCount++;
+        }
+        
+        await db.query('COMMIT');
+        await db.end();
+        console.log(`Successfully inserted ${insertedCount} records`);
+
+        setSuccessMessage(t('input.success.saveSuccess', { count: insertedCount }));
+        setShowSuccessModal(true);
+      } catch (onlineError: any) {
+        console.error('Online saving failed, falling back to offline queue:', onlineError);
+        // Automatically switch to offline if online fails
+        await saveToOfflineQueue(finalBlokIds, userId);
       }
-
-      console.log('Connecting to database...');
-      const db = await getDbClient();
-      console.log('Database connected');
-      
-      await db.query('BEGIN');
-      
-      const jjg = parseFloat(formData.hasil_panen_bjd) || 0;
-      const bjr = parseInt(formData.bjr) || 0;
-      const bjd = jjg * bjr; // Calculate total weight based on JJG * BJR
-      const totalRecords = finalBlokIds.length;
-      let insertedCount = 0;
-
-      console.log(`Preparing to insert ${totalRecords} records...`);
-
-      for (const blokId of finalBlokIds) {
-           await db.query(`
-             INSERT INTO harvest_records (
-                tanggal, divisi_id, blok_id, pemanen_id, tph_id, rotasi,
-                hasil_panen_bjd, bjr, buah_masak, buah_mentah, buah_mengkal,
-                overripe, abnormal, buah_busuk, tangkai_panjang, jangkos,
-                keterangan, status, created_by, nomor_panen, jumlah_jjg,
-                foto_url, jumlah_brondolan_kg
-             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-                $22, $23
-             )
-           `, [
-             formData.tanggal,
-             formData.divisi_id, // Use selected divisi_id, not profile.divisi_id
-             blokId,
-             formData.pemanen_id,
-             formData.tph_id || null,
-             parseInt(formData.rotasi),
-             bjd, // Insert calculated weight
-             bjr,
-             parseInt(formData.buah_masak) || 0,
-             parseInt(formData.buah_mentah) || 0,
-             parseInt(formData.buah_mengkal) || 0,
-             parseInt(formData.overripe) || 0,
-             parseInt(formData.abnormal) || 0,
-             parseInt(formData.buah_busuk) || 0,
-             parseInt(formData.tangkai_panjang) || 0,
-             parseInt(formData.jangkos) || 0,
-             formData.keterangan || null,
-             'submitted',
-             userId,
-             formData.nomor_panen,
-             jjg, // Insert count
-             uploadedPhotoUrl,
-             parseFloat(formData.jumlah_brondolan_kg) || 0
-           ]);
-           insertedCount++;
-      }
-      
-      await db.query('COMMIT');
-      await db.end();
-      console.log(`Successfully inserted ${insertedCount} records`);
-
-      setSuccessMessage(t('input.success.saveSuccess', { count: insertedCount }));
-      setShowSuccessModal(true);
 
     } catch (error: any) {
-      console.error('Error saving harvest:', error);
+      console.error('Error saving harvest (Global Catch):', error);
       Alert.alert(t('common.error'), t('input.error.saveFailed', { error: error.message || 'Unknown error' }));
     } finally {
       setLoading(false);

@@ -2,7 +2,9 @@ import { getDbClient } from '../db';
 import { getLocalDb, runCommand, runQuery } from './db';
 import { HarvestRecordQueueItem } from './types';
 import NetInfo from '@react-native-community/netinfo';
-import { File } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system';
+
+let isSyncingQueue = false;
 
 export const syncMasterData = async () => {
   const netInfo = await NetInfo.fetch();
@@ -17,12 +19,12 @@ export const syncMasterData = async () => {
     console.log('Syncing master data...');
 
     // 1. Sync Divisi
-    const { rows: divisiRows } = await neonClient.query('SELECT id, name, estate_name, region_name FROM divisi');
+    const { rows: divisiRows } = await neonClient.query('SELECT id, name, estate_name, rayon_id FROM divisi');
     await runCommand('DELETE FROM divisi');
     for (const row of divisiRows) {
       await runCommand(
         'INSERT INTO divisi (id, name, estate_name, region_name) VALUES (?, ?, ?, ?)',
-        [row.id, row.name, row.estate_name, row.region_name]
+        [row.id, row.name, row.estate_name, row.rayon_id || ''] // Using rayon_id as region_name for now
       );
     }
 
@@ -74,6 +76,15 @@ export const syncMasterData = async () => {
         );
     }
 
+    // 6. Sync Estates (Optional but good for completeness)
+    try {
+        const { rows: estateRows } = await neonClient.query('SELECT id, name FROM estates');
+        await runCommand('DELETE FROM estates').catch(() => {}); // Table might not exist in local schema yet
+        // If we want to support estates locally, we'd need to add the table to schema.ts
+    } catch (e) {
+        // Ignore if estates table doesn't exist in local or server
+    }
+
     console.log('Master data synced successfully');
   } catch (error) {
     console.error('Error syncing master data:', error);
@@ -84,6 +95,11 @@ export const syncMasterData = async () => {
 };
 
 export const syncHarvestQueue = async () => {
+    if (isSyncingQueue) {
+        console.log('Sync already in progress, skipping...');
+        return;
+    }
+
     const netInfo = await NetInfo.fetch();
     if (!netInfo.isConnected) {
         console.log('Offline: Skipping harvest queue sync');
@@ -91,13 +107,14 @@ export const syncHarvestQueue = async () => {
     }
 
     const pendingItems = (await runQuery(
-        "SELECT * FROM harvest_records_queue WHERE status = 'pending'"
+        "SELECT * FROM harvest_records_queue WHERE status IN ('pending', 'error')"
     )) as HarvestRecordQueueItem[];
 
     if (pendingItems.length === 0) {
         return;
     }
 
+    isSyncingQueue = true;
     const neonClient = await getDbClient();
 
     try {
@@ -109,10 +126,11 @@ export const syncHarvestQueue = async () => {
                 // Handle Photo Upload
                 if (item.foto_path) {
                     try {
-                        // Check if file still exists
-                        const fileInfo = new File(item.foto_path);
+                        const fileInfo = await FileSystem.getInfoAsync(item.foto_path);
                         if (fileInfo.exists) {
-                            const base64 = await fileInfo.base64();
+                            const base64 = await FileSystem.readAsStringAsync(item.foto_path, {
+                                encoding: FileSystem.EncodingType.Base64,
+                            });
                             
                             const { rows } = await neonClient.query(`
                                 INSERT INTO harvest_photos (photo_data, mime_type)
@@ -123,14 +141,21 @@ export const syncHarvestQueue = async () => {
                             if (rows && rows.length > 0) {
                                 photoId = rows[0].id;
                                 photoUrl = `db-photo://${photoId}`;
+                            } else {
+                                throw new Error('Failed to get photo ID after upload');
                             }
                         } else {
                             console.warn('Photo file not found at path:', item.foto_path);
+                            // If the file is gone, we can't sync it. 
+                            // Mark as synced with error? Or just skip? 
+                            // Let's mark as synced but note the missing photo
                         }
-                    } catch (photoError) {
+                    } catch (photoError: any) {
                         console.error('Error uploading photo during sync:', photoError);
-                        // Continue without photo? Or fail?
-                        // Let's continue but log error
+                        // IMPORTANT: If we have a photo path but upload fails, 
+                        // we should THROW an error to skip syncing this record 
+                        // and retry it later (when connection is better).
+                        throw new Error(`Photo upload failed: ${photoError.message}`);
                     }
                 }
 
@@ -206,5 +231,6 @@ export const syncHarvestQueue = async () => {
         console.error('Error during queue sync:', error);
     } finally {
         await neonClient.end();
+        isSyncingQueue = false;
     }
 };

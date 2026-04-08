@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } 
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDbClient } from '@/lib/db';
-import { CheckSquare, Target, Users, TrendingUp } from 'lucide-react-native';
+import { CheckSquare, Target, Users, TrendingUp, RefreshCw } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 
 export default function MandorDashboard() {
@@ -175,6 +175,22 @@ export default function MandorDashboard() {
               target: stats.target, 
               percent: stats.target > 0 ? Math.round((stats.realization / stats.target) * 100) : 0 
             })}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.taskCard}
+          onPress={() => router.push('/sync-manager')}
+        >
+          <View style={styles.taskHeader}>
+            <View style={[styles.taskBadge, { backgroundColor: '#4a7c23' }]}>
+              <Text style={styles.taskBadgeText}>OFFLINE MODE</Text>
+            </View>
+            <RefreshCw size={16} color="#666" />
+          </View>
+          <Text style={styles.taskTitle}>Manajer Sinkronisasi</Text>
+          <Text style={styles.taskDescription}>
+            Kelola data panen yang belum terupload dan sinkronkan data master ke perangkat Anda.
           </Text>
         </TouchableOpacity>
       </View>

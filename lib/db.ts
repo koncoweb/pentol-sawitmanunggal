@@ -22,15 +22,8 @@ export const getDbClient = async () => {
     return client;
   } catch (error) {
     console.error('Database connection failed:', error);
-    // Retry once
-    try {
-        console.log('Retrying connection...');
-        const retryClient = new Client({ connectionString });
-        await retryClient.connect();
-        return retryClient;
-    } catch (retryError) {
-        console.error('Retry failed:', retryError);
-        throw retryError;
-    }
+    // Remove the manual retry logic here to avoid "Body is unusable" issues
+    // and let the application handle the failure (e.g., fallback to offline)
+    throw error;
   }
 };
