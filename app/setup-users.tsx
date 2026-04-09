@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIn
 import { authClient } from '@/lib/auth-client';
 import { getDbClient } from '@/lib/db';
 import { router } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 
 const dummyUsers = [
   {
@@ -40,22 +41,29 @@ const dummyUsers = [
     password: 'regional123',
     full_name: 'Ir. Ahmad Yani',
     role: 'regional_gm'
+  },
+  {
+    email: 'nurrahman.hakim@sawitmanunggal.com',
+    password: 'rahina112218',
+    full_name: 'Nurrahman Hakim',
+    role: 'administrator'
   }
 ];
 
 export default function SetupUsersScreen() {
+  const { t } = useTranslation();
   const [creating, setCreating] = useState(false);
   const [progress, setProgress] = useState('');
   const [created, setCreated] = useState<string[]>([]);
 
   const createUsers = async () => {
     setCreating(true);
-    setProgress('Memulai pembuatan users...');
+    setProgress(t('setupUsers.progress.starting'));
     setCreated([]);
 
     for (const user of dummyUsers) {
       try {
-        setProgress(`Membuat: ${user.email}`);
+        setProgress(t('setupUsers.progress.creating', { email: user.email }));
 
         // Sign up with Neon Auth
         const { data, error } = await authClient.signUp.email({
@@ -66,9 +74,9 @@ export default function SetupUsersScreen() {
 
         if (error) {
           if (error.message?.includes('already registered') || error.status === 400 || error.message?.includes('already exists')) {
-             setCreated(prev => [...prev, `⚠️ ${user.email} (sudah ada)`]);
+             setCreated(prev => [...prev, t('setupUsers.status.alreadyExists', { email: user.email })]);
           } else {
-            setCreated(prev => [...prev, `❌ ${user.email}: ${error.message}`]);
+            setCreated(prev => [...prev, t('setupUsers.status.error', { email: user.email, error: error.message })]);
           }
         } else if (data) {
            // User created successfully. Now create/update profile.
@@ -81,25 +89,25 @@ export default function SetupUsersScreen() {
                SET full_name = EXCLUDED.full_name, role = EXCLUDED.role
              `, [data.user.id, user.email, user.full_name, user.role]);
              await db.end();
-             setCreated(prev => [...prev, `✅ ${user.email}`]);
+             setCreated(prev => [...prev, t('setupUsers.status.success', { email: user.email })]);
            } catch (dbError: any) {
              console.error('DB Error:', dbError);
-             setCreated(prev => [...prev, `⚠️ ${user.email} (Auth OK, DB Fail: ${dbError.message})`]);
+             setCreated(prev => [...prev, t('setupUsers.status.dbFail', { email: user.email, error: dbError.message })]);
            }
         }
 
         await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error: any) {
-        setCreated(prev => [...prev, `❌ ${user.email}: ${error.message}`]);
+        setCreated(prev => [...prev, t('setupUsers.status.error', { email: user.email, error: error.message })]);
       }
     }
 
-    setProgress('Selesai!');
+    setProgress(t('setupUsers.progress.done'));
     setCreating(false);
 
     Alert.alert(
-      'Setup Selesai',
-      'Users berhasil diproses. Silakan cek hasil.',
+      t('setupUsers.alert.title'),
+      t('setupUsers.alert.message'),
       [
         { text: 'OK', onPress: () => router.replace('/login') }
       ]
@@ -108,7 +116,7 @@ export default function SetupUsersScreen() {
 
   const updateProfiles = async () => {
     setCreating(true);
-    setProgress('Updating Profiles...');
+    setProgress(t('setupUsers.progress.updatingProfiles'));
     try {
       const db = await getDbClient();
       
@@ -136,6 +144,10 @@ export default function SetupUsersScreen() {
         {
           email: 'regional@sawitmanunggal.com',
           updates: { full_name: 'Ir. Ahmad Yani', role: 'regional_gm' }
+        },
+        {
+          email: 'nurrahman.hakim@sawitmanunggal.com',
+          updates: { full_name: 'Nurrahman Hakim', role: 'administrator' }
         }
       ];
 
@@ -154,9 +166,9 @@ export default function SetupUsersScreen() {
       
       await db.end();
 
-      Alert.alert('Success', 'Profiles berhasil diupdate!');
+      Alert.alert(t('setupUsers.alert.successTitle'), t('setupUsers.alert.successMessage'));
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      Alert.alert(t('setupUsers.alert.errorTitle'), error.message);
     } finally {
       setCreating(false);
     }
@@ -166,19 +178,19 @@ export default function SetupUsersScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Setup Dummy Users</Text>
+        <Text style={styles.title}>{t('setupUsers.title')}</Text>
         <Text style={styles.subtitle}>
-          Buat 6 akun dummy untuk testing semua role
+          {t('setupUsers.subtitle')}
         </Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Users yang akan dibuat:</Text>
+        <Text style={styles.sectionTitle}>{t('setupUsers.usersList')}</Text>
         {dummyUsers.map((user, index) => (
           <View key={index} style={styles.userCard}>
             <Text style={styles.userName}>{user.full_name}</Text>
             <Text style={styles.userEmail}>{user.email}</Text>
-            <Text style={styles.userRole}>Role: {user.role}</Text>
+            <Text style={styles.userRole}>{t('common.role')}: {user.role}</Text>
           </View>
         ))}
       </View>
@@ -202,7 +214,7 @@ export default function SetupUsersScreen() {
           onPress={createUsers}
           disabled={creating}
         >
-          <Text style={styles.buttonText}>1. Buat Users & Update Profile</Text>
+          <Text style={styles.buttonText}>{t('setupUsers.button.createUsers')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -210,7 +222,7 @@ export default function SetupUsersScreen() {
           onPress={updateProfiles}
           disabled={creating}
         >
-          <Text style={styles.buttonText}>2. Force Update Profiles (Optional)</Text>
+          <Text style={styles.buttonText}>{t('setupUsers.button.updateProfiles')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -218,16 +230,15 @@ export default function SetupUsersScreen() {
           onPress={() => router.replace('/login')}
         >
           <Text style={[styles.buttonText, styles.buttonOutlineText]}>
-            Ke Login
+            {t('setupUsers.button.toLogin')}
           </Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>Catatan:</Text>
+        <Text style={styles.infoTitle}>{t('setupUsers.note.title')}</Text>
         <Text style={styles.infoText}>
-          1. Klik Buat Users untuk create user di Neon Auth dan Profile{'\n'}
-          2. Jika user sudah ada di Auth tapi tidak di Profile, gunakan tombol 2{'\n'}
+          {t('setupUsers.note.text')}
         </Text>
       </View>
     </ScrollView>

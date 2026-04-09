@@ -3,11 +3,13 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } 
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDbClient } from '@/lib/db';
-import { CheckSquare, Target, Users, TrendingUp } from 'lucide-react-native';
+import { CheckSquare, Target, Users, TrendingUp, RefreshCw } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 export default function MandorDashboard() {
   const router = useRouter();
   const { profile } = useAuth();
+  const { t } = useTranslation();
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     pending: 0,
@@ -85,25 +87,25 @@ export default function MandorDashboard() {
 
   const quickStats = [
     {
-      label: 'Pending Approval',
+      label: t('mandor.stats.pending'),
       value: stats.pending.toString(),
       color: '#f57c00',
       icon: CheckSquare,
     },
     {
-      label: 'Target Hari Ini',
+      label: t('mandor.stats.target'),
       value: stats.target.toString(), // TODO: Fetch from RKH
       color: '#2d5016',
       icon: Target,
     },
     {
-      label: 'Realisasi',
+      label: t('mandor.stats.realization'),
       value: stats.realization.toString(),
       color: '#4a7c23',
       icon: TrendingUp,
     },
     {
-      label: 'Anggota Gang',
+      label: t('mandor.stats.members'),
       value: stats.members.toString(),
       color: '#6ba82e',
       icon: Users,
@@ -116,10 +118,10 @@ export default function MandorDashboard() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       <View style={styles.header}>
-        <Text style={styles.greeting}>Selamat Datang,</Text>
+        <Text style={styles.greeting}>{t('common.welcome')},</Text>
         <Text style={styles.name}>{profile?.full_name}</Text>
         <View style={styles.roleTag}>
-          <Text style={styles.roleText}>Mandor Panen</Text>
+          <Text style={styles.roleText}>{t('mandor.role')}</Text>
         </View>
       </View>
 
@@ -134,9 +136,9 @@ export default function MandorDashboard() {
           </View>
         ))}
       </View>
-
+      
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Tugas Hari Ini</Text>
+        <Text style={styles.sectionTitle}>{t('mandor.tasks.title')}</Text>
 
         <TouchableOpacity 
           style={styles.taskCard}
@@ -144,41 +146,59 @@ export default function MandorDashboard() {
         >
           <View style={styles.taskHeader}>
             <View style={[styles.taskBadge, { backgroundColor: '#f57c00' }]}>
-              <Text style={styles.taskBadgeText}>Urgent</Text>
+                <Text style={styles.taskBadgeText}>{t('mandor.tasks.urgent')}</Text>
+              </View>
+              <Text style={styles.taskTime}>{t('mandor.tasks.today')}</Text>
             </View>
-            <Text style={styles.taskTime}>Hari ini</Text>
+            <Text style={styles.taskTitle}>{t('mandor.tasks.approvalTitle')}</Text>
+            <Text style={styles.taskDescription}>
+              {stats.pending > 0 
+                ? t('mandor.tasks.approvalWaiting', { count: stats.pending })
+                : t('mandor.tasks.approvalDesc')}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.taskCard}
+            onPress={() => router.push('/gang-performance' as any)}
+          >
+            <View style={styles.taskHeader}>
+              <View style={[styles.taskBadge, { backgroundColor: '#2d5016' }]}>
+                <Text style={styles.taskBadgeText}>{t('mandor.tasks.targetBadge')}</Text>
+              </View>
+            <Text style={styles.taskTime}>{t('mandor.tasks.before3pm')}</Text>
           </View>
-          <Text style={styles.taskTitle}>Approval Data Panen</Text>
+          <Text style={styles.taskTitle}>{t('mandor.tasks.performanceTitle')}</Text>
           <Text style={styles.taskDescription}>
-            {stats.pending > 0 
-              ? `Ada ${stats.pending} data panen menunggu validasi`
-              : 'Validasi fisik buah di lapangan dan approve data dari Krani'}
+            {t('mandor.tasks.performanceDesc', { 
+              real: stats.realization, 
+              target: stats.target, 
+              percent: stats.target > 0 ? Math.round((stats.realization / stats.target) * 100) : 0 
+            })}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.taskCard}
-          onPress={() => router.push('/gang-performance' as any)}
+          onPress={() => router.push('/sync-manager')}
         >
           <View style={styles.taskHeader}>
-            <View style={[styles.taskBadge, { backgroundColor: '#2d5016' }]}>
-              <Text style={styles.taskBadgeText}>Target</Text>
+            <View style={[styles.taskBadge, { backgroundColor: '#4a7c23' }]}>
+              <Text style={styles.taskBadgeText}>OFFLINE MODE</Text>
             </View>
-            <Text style={styles.taskTime}>Sebelum jam 15:00</Text>
+            <RefreshCw size={16} color="#666" />
           </View>
-          <Text style={styles.taskTitle}>Monitoring Pencapaian Gang</Text>
+          <Text style={styles.taskTitle}>Manajer Sinkronisasi</Text>
           <Text style={styles.taskDescription}>
-            Realisasi: {stats.realization} / {stats.target} Janjang 
-            ({stats.target > 0 ? Math.round((stats.realization / stats.target) * 100) : 0}%)
+            Kelola data panen yang belum terupload dan sinkronkan data master ke perangkat Anda.
           </Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>Catatan Penting</Text>
+        <Text style={styles.infoTitle}>{t('mandor.info.title')}</Text>
         <Text style={styles.infoText}>
-          Approval harus dilakukan sebelum jam kerja berakhir. Pastikan kualitas grading sesuai
-          dengan kondisi fisik buah di lapangan.
+          {t('mandor.info.text')}
         </Text>
       </View>
     </ScrollView>

@@ -1,11 +1,13 @@
 import { Tabs, useRouter } from 'expo-router';
-import { Home, FileText, CheckSquare, BarChart3, Building2, MapPin } from 'lucide-react-native';
+import { Home, FileText, CheckSquare, BarChart3, Building2, MapPin, Settings, Shield, MessageCircle } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { TouchableOpacity, Text, StyleSheet, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 export default function TabLayout() {
   const { profile, signOut } = useAuth();
   const router = useRouter();
+  const { t } = useTranslation();
 
   const handleLogout = async () => {
     await signOut();
@@ -13,21 +15,26 @@ export default function TabLayout() {
   };
 
   const getTabsForRole = () => {
+    const commonTabs = ['profile', 'chat'];
     switch (profile?.role) {
+      case 'administrator':
+        return ['admin', 'regional', 'estate', 'reports', 'analytics', 'approval', ...commonTabs];
       case 'krani_panen':
-        return ['index', 'profile'];
+        return ['index', ...commonTabs];
       case 'krani_buah':
-        return ['krani-buah', 'profile'];
+        return ['krani-buah', ...commonTabs];
       case 'mandor':
-        return ['mandor', 'approval', 'profile'];
+        return ['mandor', 'approval', 'reports', ...commonTabs];
       case 'asisten':
-        return ['asisten', 'monitoring', 'profile'];
+        return ['asisten', 'monitoring', 'reports', ...commonTabs];
+      case 'senior_asisten':
+        return ['asisten', 'reports', 'analytics', ...commonTabs];
       case 'estate_manager':
-        return ['estate', 'reports', 'monitoring', 'profile'];
+        return ['estate', 'reports', 'monitoring', ...commonTabs];
       case 'regional_gm':
-        return ['regional', 'reports', 'analytics', 'profile'];
+        return ['regional', 'reports', 'analytics', ...commonTabs];
       default:
-        return ['index', 'profile'];
+        return ['index', ...commonTabs];
     }
   };
 
@@ -52,16 +59,25 @@ export default function TabLayout() {
         },
         headerRight: () => (
           <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-            <Text style={styles.logoutText}>Keluar</Text>
+            <Text style={styles.logoutText}>{t('common.logout')}</Text>
           </TouchableOpacity>
         ),
       }}
     >
       <Tabs.Screen
+        name="admin"
+        options={{
+          title: t('screen.dashboardAdmin'),
+          tabBarLabel: t('tabs.admin'),
+          tabBarIcon: ({ size, color }) => <Shield size={size} color={color} />,
+          href: visibleTabs.includes('admin') ? '/(tabs)/admin' : null,
+        }}
+      />
+      <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard Krani Panen',
-          tabBarLabel: 'Beranda',
+          title: t('screen.dashboardKraniPanen'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ size, color }) => <Home size={size} color={color} />,
           href: visibleTabs.includes('index') ? '/(tabs)' : null,
         }}
@@ -69,8 +85,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="krani-buah"
         options={{
-          title: 'Dashboard Krani Buah',
-          tabBarLabel: 'Beranda',
+          title: t('screen.dashboardKraniBuah'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ size, color }) => <FileText size={size} color={color} />,
           href: visibleTabs.includes('krani-buah') ? '/(tabs)/krani-buah' : null,
         }}
@@ -78,35 +94,26 @@ export default function TabLayout() {
       <Tabs.Screen
         name="mandor"
         options={{
-          title: 'Dashboard Mandor',
-          tabBarLabel: 'Beranda',
+          title: t('screen.dashboardMandor'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ size, color }) => <Home size={size} color={color} />,
           href: visibleTabs.includes('mandor') ? '/(tabs)/mandor' : null,
         }}
       />
       <Tabs.Screen
-        name="approval"
-        options={{
-          title: 'Approval',
-          tabBarLabel: 'Approval',
-          tabBarIcon: ({ size, color }) => <CheckSquare size={size} color={color} />,
-          href: visibleTabs.includes('approval') ? '/(tabs)/approval' : null,
-        }}
-      />
-      <Tabs.Screen
         name="asisten"
         options={{
-          title: 'Dashboard Asisten',
-          tabBarLabel: 'Beranda',
-          tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
+          title: t('screen.dashboardAsisten'),
+          tabBarLabel: t('tabs.home'),
+          tabBarIcon: ({ size, color }) => <Home size={size} color={color} />,
           href: visibleTabs.includes('asisten') ? '/(tabs)/asisten' : null,
         }}
       />
       <Tabs.Screen
         name="estate"
         options={{
-          title: 'Dashboard Estate Manager',
-          tabBarLabel: 'Beranda',
+          title: t('screen.dashboardManager'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ size, color }) => <Building2 size={size} color={color} />,
           href: visibleTabs.includes('estate') ? '/(tabs)/estate' : null,
         }}
@@ -114,26 +121,17 @@ export default function TabLayout() {
       <Tabs.Screen
         name="regional"
         options={{
-          title: 'Dashboard Regional',
-          tabBarLabel: 'Beranda',
+          title: t('screen.dashboardRegional'),
+          tabBarLabel: t('tabs.home'),
           tabBarIcon: ({ size, color }) => <MapPin size={size} color={color} />,
           href: visibleTabs.includes('regional') ? '/(tabs)/regional' : null,
         }}
       />
       <Tabs.Screen
-        name="monitoring"
-        options={{
-          title: 'Monitoring',
-          tabBarLabel: 'Monitoring',
-          tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
-          href: visibleTabs.includes('monitoring') ? '/(tabs)/monitoring' : null,
-        }}
-      />
-      <Tabs.Screen
         name="reports"
         options={{
-          title: 'Laporan',
-          tabBarLabel: 'Laporan',
+          title: t('screen.reports'),
+          tabBarLabel: t('tabs.reports'),
           tabBarIcon: ({ size, color }) => <FileText size={size} color={color} />,
           href: visibleTabs.includes('reports') ? '/(tabs)/reports' : null,
         }}
@@ -141,18 +139,45 @@ export default function TabLayout() {
       <Tabs.Screen
         name="analytics"
         options={{
-          title: 'Analytics',
-          tabBarLabel: 'Analytics',
+          title: t('screen.analytics'),
+          tabBarLabel: t('tabs.analytics'),
           tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
           href: visibleTabs.includes('analytics') ? '/(tabs)/analytics' : null,
         }}
       />
       <Tabs.Screen
+        name="approval"
+        options={{
+          title: t('screen.approval'),
+          tabBarLabel: t('tabs.approval'),
+          tabBarIcon: ({ size, color }) => <CheckSquare size={size} color={color} />,
+          href: visibleTabs.includes('approval') ? '/(tabs)/approval' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="monitoring"
+        options={{
+          title: t('screen.monitoring'),
+          tabBarLabel: t('tabs.monitoring'),
+          tabBarIcon: ({ size, color }) => <BarChart3 size={size} color={color} />,
+          href: visibleTabs.includes('monitoring') ? '/(tabs)/monitoring' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: t('tabs.chat') || 'Chat',
+          tabBarLabel: t('tabs.chat') || 'Chat',
+          tabBarIcon: ({ size, color }) => <MessageCircle size={size} color={color} />,
+          href: (visibleTabs.includes('chat') ? '/(tabs)/chat' : null) as any,
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profil',
-          tabBarLabel: 'Profil',
-          tabBarIcon: ({ size, color }) => <Home size={size} color={color} />,
+          title: t('screen.profile'),
+          tabBarLabel: t('tabs.profile'),
+          tabBarIcon: ({ size, color }) => <Settings size={size} color={color} />,
           href: visibleTabs.includes('profile') ? '/(tabs)/profile' : null,
         }}
       />

@@ -1,12 +1,43 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '@/contexts/AuthContext';
 import { FileText, MapPin, AlertCircle, Camera } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 export default function KraniPanenDashboard() {
   const router = useRouter();
   const { profile } = useAuth();
+  const { t } = useTranslation();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!profile) return;
+
+      switch (profile.role) {
+        case 'krani_buah':
+          router.replace('/(tabs)/krani-buah');
+          break;
+        case 'mandor':
+          router.replace('/(tabs)/mandor');
+          break;
+        case 'asisten':
+        case 'senior_asisten':
+          router.replace('/(tabs)/asisten');
+          break;
+        case 'estate_manager':
+          router.replace('/(tabs)/estate');
+          break;
+        case 'regional_gm':
+          router.replace('/(tabs)/regional');
+          break;
+        case 'administrator':
+          router.replace('/(tabs)/admin');
+          break;
+      }
+    }, [profile, router])
+  );
 
   const handleMenuAction = (action: string) => {
     console.log('Menu action clicked:', action);
@@ -17,25 +48,25 @@ export default function KraniPanenDashboard() {
         break;
       case 'foto-tph':
         // Foto TPH sementara diarahkan ke input panen atau coming soon
-        Alert.alert('Info', 'Fitur Foto TPH khusus akan hadir di update berikutnya. Silakan gunakan foto pada Input Panen.');
+        Alert.alert(t('common.info'), t('dashboard.krani.featureComingSoon'));
         break;
       case 'grading':
         Alert.alert(
-          'Info', 
-          'Menu Grading sudah terintegrasi di halaman Input Panen.',
+          t('common.info'), 
+          t('dashboard.krani.gradingIntegrated'),
           [
-            { text: 'Batal', style: 'cancel' },
-            { text: 'Ke Input Panen', onPress: () => router.push('/input-panen') }
+            { text: t('common.cancel'), style: 'cancel' },
+            { text: t('dashboard.krani.goToInput'), onPress: () => router.push('/input-panen') }
           ]
         );
         break;
       case 'losses':
         Alert.alert(
-          'Info', 
-          'Menu Losses Monitoring sudah terintegrasi di halaman Input Panen.',
+          t('common.info'), 
+          t('dashboard.krani.lossesIntegrated'),
           [
-            { text: 'Batal', style: 'cancel' },
-            { text: 'Ke Input Panen', onPress: () => router.push('/input-panen') }
+            { text: t('common.cancel'), style: 'cancel' },
+            { text: t('dashboard.krani.goToInput'), onPress: () => router.push('/input-panen') }
           ]
         );
         break;
@@ -47,32 +78,32 @@ export default function KraniPanenDashboard() {
   const menuItems = [
     {
       id: '1',
-      title: 'Input Data Panen',
-      description: 'Catat hasil panen per blok',
+      title: t('dashboard.menu.inputHarvest'),
+      description: t('dashboard.menu.inputHarvestDesc'),
       icon: FileText,
       color: '#2d5016',
       action: 'input-panen',
     },
     {
       id: '2',
-      title: 'Foto TPH',
-      description: 'Dokumentasi TPH dengan GPS',
+      title: t('dashboard.menu.photoTPH'),
+      description: t('dashboard.menu.photoTPHDesc'),
       icon: Camera,
       color: '#4a7c23',
       action: 'foto-tph',
     },
     {
       id: '3',
-      title: 'Grading Buah',
-      description: 'Klasifikasi kualitas buah',
+      title: t('dashboard.menu.grading'),
+      description: t('dashboard.menu.gradingDesc'),
       icon: AlertCircle,
       color: '#6ba82e',
       action: 'grading',
     },
     {
       id: '4',
-      title: 'Losses Monitoring',
-      description: 'Pencatatan denda lapangan',
+      title: t('dashboard.menu.losses'),
+      description: t('dashboard.menu.lossesDesc'),
       icon: MapPin,
       color: '#8ac449',
       action: 'losses',
@@ -82,26 +113,26 @@ export default function KraniPanenDashboard() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.greeting}>Selamat Datang,</Text>
+        <Text style={styles.greeting}>{t('dashboard.welcome')}</Text>
         <Text style={styles.name}>{profile?.full_name}</Text>
         <View style={styles.roleTag}>
-          <Text style={styles.roleText}>Krani Panen</Text>
+          <Text style={styles.roleText}>{t('roles.kraniPanen')}</Text>
         </View>
       </View>
 
       <View style={styles.statsContainer}>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>0</Text>
-          <Text style={styles.statLabel}>Data Hari Ini</Text>
+          <Text style={styles.statLabel}>{t('dashboard.stats.todayData')}</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>0</Text>
-          <Text style={styles.statLabel}>Pending Approval</Text>
+          <Text style={styles.statLabel}>{t('dashboard.stats.pendingApproval')}</Text>
         </View>
       </View>
 
       <View style={styles.menuContainer}>
-        <Text style={styles.sectionTitle}>Menu Utama</Text>
+        <Text style={styles.sectionTitle}>{t('dashboard.mainMenu')}</Text>
         {menuItems.map((item) => (
           <TouchableOpacity
             key={item.id}
@@ -124,10 +155,9 @@ export default function KraniPanenDashboard() {
       </View>
 
       <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>Informasi</Text>
+        <Text style={styles.infoTitle}>{t('common.information')}</Text>
         <Text style={styles.infoText}>
-          Pastikan data panen dicatat sebelum jam kerja berakhir. Foto TPH harus diambil di
-          lokasi dengan GPS aktif.
+          {t('dashboard.infoText')}
         </Text>
       </View>
     </ScrollView>

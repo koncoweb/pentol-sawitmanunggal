@@ -9,6 +9,7 @@ import {
   TextInput,
 } from 'react-native';
 import { ChevronDown, Search, X } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface DropdownItem {
   label: string;
@@ -34,6 +35,7 @@ export default function Dropdown({
   required = false,
   searchable = false,
 }: DropdownProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -93,7 +95,7 @@ export default function Dropdown({
               <Search size={20} color="#999" />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Cari..."
+                placeholder={t('dropdown.search')}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 autoFocus
@@ -104,7 +106,7 @@ export default function Dropdown({
           <ScrollView style={styles.itemList}>
             {filteredItems.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>Tidak ada data</Text>
+                <Text style={styles.emptyText}>{t('dropdown.noData')}</Text>
               </View>
             ) : (
               filteredItems.map((item) => (

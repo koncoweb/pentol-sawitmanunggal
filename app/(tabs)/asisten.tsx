@@ -44,7 +44,9 @@ export default function AsistenDashboard() {
         <Text style={styles.greeting}>Selamat Datang,</Text>
         <Text style={styles.name}>{profile?.full_name}</Text>
         <View style={styles.roleTag}>
-          <Text style={styles.roleText}>Asisten Divisi</Text>
+          <Text style={styles.roleText}>
+            {profile?.role === 'senior_asisten' ? 'Senior Asisten' : 'Asisten Divisi'}
+          </Text>
         </View>
       </View>
 

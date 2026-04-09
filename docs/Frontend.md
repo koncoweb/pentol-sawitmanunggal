@@ -7,19 +7,24 @@ Frontend aplikasi **PENTOL (Pencatatan Online)** - Harvest Management System dib
 - **Navigation**: Expo Router (file-based routing)
 - **UI**: React Native core components dengan custom styling
 - **State Management**: React Context API
+- **Database**: Neon Database (PostgreSQL) via Serverless Driver
+- **Authentication**: Better Auth
+- **Offline Storage**: SQLite via expo-sqlite
 - **Styling**: StyleSheet (React Native)
-- **Platform**: Web (primary), iOS & Android (future)
+- **Platform**: Web (primary), iOS & Android
 
 ## Tech Stack
 
 ### Core Dependencies
 ```json
 {
-  "expo": "^54.0.10",
-  "expo-router": "~6.0.8",
+  "expo": "~54.0.33",
+  "expo-router": "~6.0.23",
   "react": "19.1.0",
-  "react-native": "0.81.4",
-  "@supabase/supabase-js": "^2.58.0"
+  "react-native": "0.81.5",
+  "@neondatabase/serverless": "^1.0.2",
+  "better-auth": "^1.4.10",
+  "expo-sqlite": "~16.0.10"
 }
 ```
 
@@ -68,7 +73,15 @@ project/
 ├── contexts/                    # React Context
 │   └── AuthContext.tsx          # Authentication state
 ├── lib/                         # Libraries & utilities
-│   └── supabase.ts             # Supabase client
+│   ├── i18n/                    # Internationalization (ID/EN)
+│   ├── offline/                 # Offline-first logic
+│   │   ├── db.ts                # SQLite configuration
+│   │   ├── schema.ts            # Local database schema
+│   │   ├── sync.ts              # Data synchronization logic
+│   │   └── hooks.ts             # Offline data hooks
+│   ├── auth-client.ts           # Better Auth client
+│   ├── db.ts                    # Neon Database client
+│   └── reportService.ts         # Service untuk laporan
 ├── components/                  # Reusable components
 │   ├── Dropdown.tsx            # Dropdown selector component
 │   ├── MultiSelectDropdown.tsx # Multi-select dropdown component
@@ -103,8 +116,11 @@ Role-based tab visibility:
 | Krani Buah | Dashboard, Profile |
 | Mandor | Dashboard, Approval, Profile |
 | Asisten | Dashboard, Monitoring, Profile |
+| Senior Asisten | Dashboard, Reports, Monitoring, Profile |
 | Estate Manager | Dashboard, Reports, Monitoring, Profile |
 | Regional GM | Dashboard, Reports, Analytics, Profile |
+| General Manager | Dashboard, Corporate Reports, Analytics, Profile |
+| Administrator | Dashboard, User Management, Profile |
 
 ## State Management
 
@@ -129,7 +145,7 @@ const { profile, loading, signIn, signOut } = useAuth()
 
 ### State Flow
 1. App starts → Loading state
-2. Check session → Get user profile from Supabase
+2. Check session → Get user profile from Neon/Better Auth
 3. Profile loaded → Render appropriate dashboard
 4. Auth state change → Auto-update UI
 
@@ -219,6 +235,12 @@ Components:
 - Regional statistics grid
 - Estate comparison cards
 - Analytics & Reports section
+
+#### 7. Senior Asisten & General Manager & Administrator
+**Note:** Dashboard untuk role baru (Senior Asisten, GM, Admin) akan mengikuti pola desain yang sama dengan role di atas:
+- **Senior Asisten**: Mirip Estate Manager tapi filter default set ke Rayon terkait.
+- **General Manager**: Mirip Regional GM tapi cakupan seluruh perusahaan.
+- **Administrator**: Dashboard khusus manajemen user (CRUD Users, Assign Roles/Locations).
 
 ### Supporting Screens
 
@@ -703,7 +725,7 @@ const [endDate, setEndDate] = useState('');
 const [loading, setLoading] = useState(false);
 ```
 
-**Export Flow:**
+### Export Flow:
 ```typescript
 1. User klik Export button
 2. Modal terbuka
@@ -719,7 +741,27 @@ const [loading, setLoading] = useState(false);
 12. Alert success & modal close
 ```
 
-**Integration dengan Report Service:**
+## Offline-first Mechanism
+
+Aplikasi dirancang untuk bekerja sepenuhnya tanpa koneksi internet (offline) saat di lapangan.
+
+### 1. Local Storage (SQLite)
+Menggunakan `expo-sqlite` untuk menyimpan data secara lokal di perangkat.
+- **Master Data**: `divisi`, `gang`, `blok`, `pemanen`, `tph` di-cache secara lokal.
+- **Transaction Data**: Data panen disimpan dalam antrian (`harvest_records_queue`) sebelum disinkronkan.
+
+### 2. Synchronization Flow
+- **Master Data Sync**: Mengunduh data terbaru dari server Neon ke SQLite lokal saat aplikasi mendeteksi koneksi internet.
+- **Data Submission**: Saat user submit data panen, data masuk ke SQLite lokal dengan status `pending`.
+- **Background Sync**: Saat koneksi internet tersedia, aplikasi akan:
+    1. Mengunggah foto ke database (dalam format base64/blob).
+    2. Mengirim data transaksi ke tabel `harvest_records` di Neon.
+    3. Mengubah status lokal menjadi `synced`.
+
+### 3. Image Handling
+Foto hasil panen disimpan sebagai path lokal saat offline, dan dikonversi ke base64 untuk disimpan di tabel `harvest_photos` saat sinkronisasi.
+
+## Integration dengan Report Service
 ```typescript
 import {
   fetchReportData,
@@ -783,7 +825,7 @@ const [showExportModal, setShowExportModal] = useState(false);
 **Dependencies:**
 - `@/lib/reportService` - Data fetching
 - `@/lib/exportUtils` - Export functions
-- `@/lib/supabase` - Database connection
+- `@/lib/db` - Database connection
 - `@/contexts/AuthContext` - User profile
 - `lucide-react-native` - Icons
 

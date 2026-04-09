@@ -1,8 +1,8 @@
-# 🧪 Testing Guide - Sawit Manunggal
+# 🧪 Testing Guide - HMS - AEP Nusantara Plantations
 
 ## Overview
 
-Panduan lengkap untuk testing aplikasi Sawit Manunggal dengan semua role yang tersedia.
+Panduan lengkap untuk testing aplikasi HMS - AEP Nusantara Plantations dengan semua role yang tersedia.
 
 ## 🚀 Quick Start
 

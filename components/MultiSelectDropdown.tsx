@@ -9,6 +9,7 @@ import {
   TextInput,
 } from 'react-native';
 import { ChevronDown, Search, X, Check } from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 
 interface DropdownItem {
   label: string;
@@ -18,9 +19,9 @@ interface DropdownItem {
 interface MultiSelectDropdownProps {
   label: string;
   placeholder: string;
-  values: string[];
+  value: string[];
   items: DropdownItem[];
-  onSelect: (values: string[]) => void;
+  onSelect: (value: string[]) => void;
   required?: boolean;
   searchable?: boolean;
 }
@@ -28,21 +29,23 @@ interface MultiSelectDropdownProps {
 export default function MultiSelectDropdown({
   label,
   placeholder,
-  values,
+  value = [],
   items,
   onSelect,
   required = false,
   searchable = false,
 }: MultiSelectDropdownProps) {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const selectedItems = items.filter((item) => values.includes(item.value));
-  const displayText = selectedItems.length > 0
-    ? selectedItems.length === 1
-      ? selectedItems[0].label
-      : `${selectedItems.length} dipilih`
-    : placeholder;
+  const selectedItems = items.filter((item) => value.includes(item.value));
+  
+  const getDisplayText = () => {
+    if (selectedItems.length === 0) return placeholder;
+    if (selectedItems.length === 1) return selectedItems[0].label;
+    return `${selectedItems.length} item dipilih`;
+  };
 
   const filteredItems = searchable
     ? items.filter((item) =>
@@ -51,10 +54,10 @@ export default function MultiSelectDropdown({
     : items;
 
   const handleToggle = (itemValue: string) => {
-    const newValues = values.includes(itemValue)
-      ? values.filter((v) => v !== itemValue)
-      : [...values, itemValue];
-    onSelect(newValues);
+    const newValue = value.includes(itemValue)
+      ? value.filter((v) => v !== itemValue)
+      : [...value, itemValue];
+    onSelect(newValue);
   };
 
   const handleClose = () => {
@@ -62,46 +65,36 @@ export default function MultiSelectDropdown({
     setSearchQuery('');
   };
 
-  const handleClear = () => {
-    onSelect([]);
-  };
-
   return (
     <View style={styles.container}>
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>
-          {label}
-          {required && <Text style={styles.required}> *</Text>}
-        </Text>
-        {values.length > 0 && (
-          <TouchableOpacity onPress={handleClear}>
-            <Text style={styles.clearButton}>Hapus Semua</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <Text style={styles.label}>
+        {label}
+        {required && <Text style={styles.required}> *</Text>}
+      </Text>
 
       <TouchableOpacity
-        style={[styles.selector, !selectedItems.length && styles.selectorPlaceholder]}
+        style={[styles.selector, selectedItems.length === 0 && styles.selectorPlaceholder]}
         onPress={() => setVisible(true)}
       >
         <Text
           style={[
             styles.selectorText,
-            !selectedItems.length && styles.selectorTextPlaceholder,
+            selectedItems.length === 0 && styles.selectorTextPlaceholder,
           ]}
         >
-          {displayText}
+          {getDisplayText()}
         </Text>
         <ChevronDown size={20} color="#999" />
       </TouchableOpacity>
 
-      {selectedItems.length > 1 && (
-        <View style={styles.selectedContainer}>
+      {/* Selected chips preview */}
+      {selectedItems.length > 0 && (
+        <View style={styles.chipsContainer}>
           {selectedItems.map((item) => (
-            <View key={item.value} style={styles.selectedChip}>
-              <Text style={styles.selectedChipText}>{item.label}</Text>
+            <View key={item.value} style={styles.chip}>
+              <Text style={styles.chipText}>{item.label}</Text>
               <TouchableOpacity onPress={() => handleToggle(item.value)}>
-                <X size={16} color="#2d5016" />
+                <X size={14} color="#666" />
               </TouchableOpacity>
             </View>
           ))}
@@ -112,8 +105,8 @@ export default function MultiSelectDropdown({
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{label}</Text>
-            <TouchableOpacity onPress={handleClose}>
-              <X size={24} color="#333" />
+            <TouchableOpacity onPress={handleClose} style={styles.closeButton}>
+              <Text style={styles.doneText}>Selesai</Text>
             </TouchableOpacity>
           </View>
 
@@ -125,64 +118,39 @@ export default function MultiSelectDropdown({
                 placeholder="Cari..."
                 value={searchQuery}
                 onChangeText={setSearchQuery}
-                autoFocus
               />
             </View>
           )}
 
-          <View style={styles.selectionInfo}>
-            <Text style={styles.selectionText}>
-              {values.length} dipilih
-            </Text>
-            {values.length > 0 && (
-              <TouchableOpacity onPress={handleClear}>
-                <Text style={styles.clearButtonModal}>Hapus Semua</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <ScrollView style={styles.itemList}>
-            {filteredItems.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>Tidak ada data</Text>
-              </View>
-            ) : (
-              filteredItems.map((item) => {
-                const isSelected = values.includes(item.value);
-                return (
-                  <TouchableOpacity
-                    key={item.value}
+          <ScrollView style={styles.itemsList}>
+            {filteredItems.map((item) => {
+              const isSelected = value.includes(item.value);
+              return (
+                <TouchableOpacity
+                  key={item.value}
+                  style={[
+                    styles.item,
+                    isSelected && styles.itemSelected,
+                  ]}
+                  onPress={() => handleToggle(item.value)}
+                >
+                  <Text
                     style={[
-                      styles.item,
-                      isSelected && styles.itemSelected,
+                      styles.itemText,
+                      isSelected && styles.itemTextSelected,
                     ]}
-                    onPress={() => handleToggle(item.value)}
                   >
-                    <Text
-                      style={[
-                        styles.itemText,
-                        isSelected && styles.itemTextSelected,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                    {isSelected && (
-                      <Check size={20} color="#2d5016" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })
+                    {item.label}
+                  </Text>
+                  {isSelected && <Check size={20} color="#2d5016" />}
+                </TouchableOpacity>
+              );
+            })}
+            {filteredItems.length === 0 && (
+              <Text style={styles.noItemsText}>{t('dropdown.noData')}</Text>
             )}
+            <View style={{ height: 40 }} />
           </ScrollView>
-
-          <View style={styles.modalFooter}>
-            <TouchableOpacity
-              style={styles.doneButton}
-              onPress={handleClose}
-            >
-              <Text style={styles.doneButtonText}>Selesai</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       </Modal>
     </View>
@@ -193,163 +161,121 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
   },
-  labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
   label: {
     fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
     fontWeight: '500',
-    color: '#333',
   },
   required: {
-    color: '#e53935',
-  },
-  clearButton: {
-    fontSize: 12,
-    color: '#e53935',
-    fontWeight: '500',
+    color: '#d32f2f',
   },
   selector: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   selectorPlaceholder: {
-    backgroundColor: '#f5f5f5',
+    borderColor: '#ddd',
   },
   selectorText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#333',
-    flex: 1,
   },
   selectorTextPlaceholder: {
     color: '#999',
   },
-  selectedContainer: {
+  chipsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 8,
   },
-  selectedChip: {
+  chip: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#e8f5e9',
+    borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
     gap: 6,
   },
-  selectedChipText: {
+  chipText: {
     fontSize: 12,
     color: '#2d5016',
     fontWeight: '500',
   },
   modalContent: {
-    backgroundColor: '#fff',
     flex: 1,
+    backgroundColor: '#fff',
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
+    padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: '#eee',
+    backgroundColor: '#fff',
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#333',
+  },
+  closeButton: {
+    padding: 4,
+  },
+  doneText: {
+    color: '#2d5016',
+    fontWeight: '600',
+    fontSize: 16,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    marginHorizontal: 16,
-    marginTop: 16,
-    paddingHorizontal: 12,
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
     gap: 8,
   },
   searchInput: {
     flex: 1,
-    padding: 12,
-    fontSize: 14,
-    color: '#333',
+    fontSize: 16,
+    paddingVertical: 8,
   },
-  selectionInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#f9f9f9',
-    marginTop: 8,
-  },
-  selectionText: {
-    fontSize: 13,
-    color: '#666',
-    fontWeight: '500',
-  },
-  clearButtonModal: {
-    fontSize: 13,
-    color: '#e53935',
-    fontWeight: '500',
-  },
-  itemList: {
+  itemsList: {
     flex: 1,
   },
   item: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f5f5f5',
   },
   itemSelected: {
-    backgroundColor: '#e8f5e9',
+    backgroundColor: '#f9fbe7',
   },
   itemText: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#333',
-    flex: 1,
   },
   itemTextSelected: {
     color: '#2d5016',
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  emptyState: {
-    padding: 32,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
+  noItemsText: {
+    padding: 20,
+    textAlign: 'center',
     color: '#999',
-  },
-  modalFooter: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-  },
-  doneButton: {
-    backgroundColor: '#2d5016',
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  doneButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
   },
 });

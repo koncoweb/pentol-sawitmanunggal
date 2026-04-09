@@ -43,7 +43,7 @@
 **Foto Hasil Panen:**
 - Ambil foto hasil panen menggunakan kamera device (mobile only)
 - Preview foto sebelum submit
-- Foto diupload ke Supabase Storage bucket 'harvest-photos'
+- Foto disimpan langsung di database (Neon) dalam format Base64 pada tabel `harvest_photos`
 - Foto bersifat opsional
 - Menampilkan loading overlay saat upload foto
 
@@ -56,17 +56,19 @@
 3. Sistem load master data (divisi list, dan data terkait divisi user)
 4. **Informasi Umum:**
    - Auto-fill Nama Krani dari profile (read-only)
-   - Pilih Divisi (wajib) dari dropdown - default dari profile, bisa diubah
-   - Pilih Tahun Tanam (opsional) dari dropdown (2010-2025)
-   - Saat divisi berubah, otomatis reload data Gang, Blok, Pemanen, TPH
+   - Divisi (Read-only, sesuai assignment profile)
+   - Gang (Read-only, sesuai assignment profile)
+   - Tahun Tanam (Read-only, otomatis dari Blok yang dipilih)
+
 5. **Lokasi & Blok:**
-   - Pilih Gang (opsional) dari dropdown dengan search
-   - Pilih Blok (wajib, bisa lebih dari 1) dari multi-select dropdown dengan search
-   - Pilih Nomor Panen (opsional) dari dropdown dengan search
+   - **Pilih Blok** (Wajib) - Dropdown dengan search (Filter berdasarkan Divisi user)
+   - **Input Rotasi** (Wajib) - Input manual (Number)
+   - **Input Nomor Panen** (Wajib) - Input manual atau Dropdown 1-20
+
 6. **Detail Panen:**
-   - Pilih Nama Pemanen (wajib, bisa lebih dari 1) dari multi-select dropdown dengan search
-   - Input Rotasi (wajib)
-   - Input Nomor Panen (opsional) - editable dropdown (bisa ketik manual atau pilih dari list 1-20)
+   - **Pilih Nama Pemanen** (Wajib) - Dropdown dengan search (Filter berdasarkan Gang user)
+   - Krani memilih pemanen yang akan diinput hasil panennya.
+   - Bisa input untuk satu atau lebih pemanen (sesuai implementasi).
 7. **Hasil Panen (JJG):** Input data BJD dan BJR (semua field opsional dengan default 0)
 8. **Kriteria Buah:** Input semua field kriteria buah termasuk Tangkai Panjang dan Jangkos (semua opsional dengan default 0)
 9. (Opsional) Ambil foto hasil panen menggunakan kamera:
@@ -78,7 +80,7 @@
     - Bisa hapus foto dan ambil ulang jika perlu
 10. Tambahkan keterangan jika perlu
 11. Simpan data dengan status "draft"
-12. Jika ada foto, upload foto ke Supabase Storage
+12. Jika ada foto, simpan foto ke database (Neon)
 13. Data tersimpan di database dan siap untuk di-submit ke Mandor
 14. Auto-navigate back ke dashboard
 
@@ -974,3 +976,82 @@ Achievement = (Actual Production / RKH Target) × 100%
 - **Brondolan** - Loose fruits that have fallen from bunches
 - **Restan** - Unharvested or undelivered fruit
 - **Losses** - Fruit left behind or not collected
+
+---
+
+## Aturan Pengelolaan Data (User Rules)
+
+Aturan hak akses dan pengelolaan data panen berdasarkan hierarki pengguna:
+
+### 1. Krani Buah (Inputter)
+- **Akses:** Mencatat dan memfoto hasil panen di TPH (Tempat Pengumpulan Hasil).
+- **Cakupan:** Data panen di lokasi tugasnya.
+
+### 2. Asisten (Divisi Level)
+- **Akses:** Melihat laporan hasil panen.
+- **Cakupan:** Per Divisi (Hanya divisi yang menjadi tanggung jawabnya).
+
+### 3. Senior Asisten (Rayon Level)
+- **Akses:** Melihat laporan hasil panen.
+- **Cakupan:** Per Rayon (Kumpulan beberapa divisi).
+  - *Contoh:* Rayon 1 (Divisi 1, 2, 3), Rayon 2 (Divisi 4, 5, 6), dst.
+
+### 4. Estate Manager (Estate Level)
+- **Akses:** Melihat laporan hasil panen secara keseluruhan di estatenya.
+- **Cakupan:**
+  - Seluruh Estate
+  - Per Rayon
+  - Per Divisi
+
+### 5. Regional Manager (Regional Level)
+- **Akses:** Melihat laporan hasil panen lintas estate.
+- **Cakupan:** Semua Estate, Rayon, dan Divisi di wilayahnya.
+  - *Contoh:* Estate TIE, BBE1, BBE2, Plasma.
+
+### 6. General Manager (Corporate Level)
+- **Akses:** Melihat laporan hasil panen tingkat perusahaan.
+- **Cakupan:** Seluruh Perusahaan (Semua Estate, Rayon, Divisi).
+
+### 7. Administrator
+- **Akses:** Manajemen pengguna.
+- **Fungsi:** Membuat dan mengelola akun untuk seluruh role di atas (Krani Buah s/d General Manager).
+
+---
+
+## Aturan Pengelolaan Data (User Rules)
+
+Aturan hak akses dan pengelolaan data panen berdasarkan hierarki pengguna:
+
+### 1. Krani Buah (Inputter)
+- **Akses:** Mencatat dan memfoto hasil panen di TPH (Tempat Pengumpulan Hasil).
+- **Cakupan:** Data panen di lokasi tugasnya.
+
+### 2. Asisten (Divisi Level)
+- **Akses:** Melihat laporan hasil panen.
+- **Cakupan:** Per Divisi (Hanya divisi yang menjadi tanggung jawabnya).
+
+### 3. Senior Asisten (Rayon Level)
+- **Akses:** Melihat laporan hasil panen.
+- **Cakupan:** Per Rayon (Kumpulan beberapa divisi).
+  - *Contoh:* Rayon 1 (Divisi 1, 2, 3), Rayon 2 (Divisi 4, 5, 6), dst.
+
+### 4. Estate Manager (Estate Level)
+- **Akses:** Melihat laporan hasil panen secara keseluruhan di estatenya.
+- **Cakupan:**
+  - Seluruh Estate
+  - Per Rayon
+  - Per Divisi
+
+### 5. Regional Manager (Regional Level)
+- **Akses:** Melihat laporan hasil panen lintas estate.
+- **Cakupan:** Semua Estate, Rayon, dan Divisi di wilayahnya.
+  - *Contoh:* Estate TIE, BBE1, BBE2, Plasma.
+
+### 6. General Manager (Corporate Level)
+- **Akses:** Melihat laporan hasil panen tingkat perusahaan.
+- **Cakupan:** Seluruh Perusahaan (Semua Estate, Rayon, Divisi).
+
+### 7. Administrator
+- **Akses:** Manajemen pengguna.
+- **Fungsi:** Membuat dan mengelola akun untuk seluruh role di atas (Krani Buah s/d General Manager).
+

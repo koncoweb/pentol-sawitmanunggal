@@ -1,9 +1,16 @@
+import 'react-native-url-polyfill/auto';
+import '@/lib/i18n';
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, LogBox } from 'react-native';
+
+// Ignore specific warnings
+LogBox.ignoreLogs([
+  'props.pointerEvents is deprecated',
+]);
 
 function RootLayoutNav() {
   const { session, loading, profile } = useAuth();
@@ -13,7 +20,7 @@ function RootLayoutNav() {
   useEffect(() => {
     if (loading) return;
 
-    const inAuthGroup = segments[0] === '(tabs)';
+    const inAuthGroup = segments[0] === '(tabs)' || segments[0] === 'input-panen' || segments[0] === 'report-detail' || segments[0] === 'admin' || segments[0] === 'create-spb' || segments[0] === 'spb-detail' || segments[0] === 'spb-list';
     const isLoginPage = segments[0] === 'login';
     const isSetupPage = segments[0] === 'setup-users';
 
@@ -60,6 +67,9 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="input-panen" />
         <Stack.Screen name="report-detail" />
+        <Stack.Screen name="create-spb" />
+        <Stack.Screen name="spb-list" />
+        <Stack.Screen name="spb-detail" />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />

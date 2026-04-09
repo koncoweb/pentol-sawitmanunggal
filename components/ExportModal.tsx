@@ -18,6 +18,7 @@ import {
   type ReportFilter,
 } from '@/lib/reportService';
 import { exportToExcel, exportToPDF } from '@/lib/exportUtils';
+import { useTranslation } from 'react-i18next';
 
 type ExportModalProps = {
   visible: boolean;
@@ -36,6 +37,7 @@ export default function ExportModal({
   reportType,
 }: ExportModalProps) {
   const { profile } = useAuth();
+  const { t } = useTranslation();
   const [format, setFormat] = useState<'excel' | 'pdf'>('excel');
   const [scope, setScope] = useState<'divisi' | 'estate'>('estate');
   const [divisiList, setDivisiList] = useState<Divisi[]>([]);
@@ -95,12 +97,12 @@ export default function ExportModal({
 
   const handleExport = async () => {
     if (!startDate || !endDate) {
-      alert('Silakan pilih tanggal mulai dan tanggal akhir');
+      alert(t('exportModal.alert.selectDates'));
       return;
     }
 
     if (scope === 'divisi' && !selectedDivisi) {
-      alert('Silakan pilih divisi');
+      alert(t('exportModal.alert.selectDivision'));
       return;
     }
 
@@ -119,7 +121,7 @@ export default function ExportModal({
       const records = await fetchReportData(filter);
 
       if (records.length === 0) {
-        alert('Tidak ada data untuk periode yang dipilih');
+        alert(t('exportModal.alert.noData'));
         return;
       }
 
@@ -131,7 +133,7 @@ export default function ExportModal({
           : 'Estate';
 
       const filename = `laporan_panen_${divisiName.toLowerCase().replace(/\s+/g, '_')}_${reportType}`;
-      const title = `LAPORAN PANEN - ${divisiName.toUpperCase()}`;
+      const title = `${t('export.title')} - ${divisiName.toUpperCase()}`;
 
       if (format === 'excel') {
         exportToExcel(exportData, filename);
@@ -139,11 +141,11 @@ export default function ExportModal({
         exportToPDF(exportData, filename, title);
       }
 
-      alert(`Laporan berhasil diexport (${records.length} data)`);
+      alert(t('exportModal.alert.success', { count: records.length }));
       onClose();
     } catch (error) {
       console.error('Error exporting:', error);
-      alert('Gagal export laporan. Silakan coba lagi.');
+      alert(t('exportModal.alert.failure'));
     } finally {
       setLoading(false);
     }
@@ -154,7 +156,7 @@ export default function ExportModal({
       <View style={styles.modalOverlay}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Export Laporan</Text>
+            <Text style={styles.modalTitle}>{t('exportModal.title')}</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <X size={24} color="#666" />
             </TouchableOpacity>
@@ -162,7 +164,7 @@ export default function ExportModal({
 
           <ScrollView style={styles.modalContent}>
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Format Export</Text>
+              <Text style={styles.sectionLabel}>{t('exportModal.format')}</Text>
               <View style={styles.optionsRow}>
                 <TouchableOpacity
                   style={[
@@ -209,7 +211,7 @@ export default function ExportModal({
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Scope Data</Text>
+              <Text style={styles.sectionLabel}>{t('exportModal.scope')}</Text>
               <View style={styles.optionsRow}>
                 <TouchableOpacity
                   style={[
@@ -224,7 +226,7 @@ export default function ExportModal({
                       scope === 'divisi' && styles.optionTextActive,
                     ]}
                   >
-                    Per Divisi
+                    {t('exportModal.perDivision')}
                   </Text>
                 </TouchableOpacity>
 
@@ -241,7 +243,7 @@ export default function ExportModal({
                       scope === 'estate' && styles.optionTextActive,
                     ]}
                   >
-                    Seluruh Estate
+                    {t('exportModal.allEstate')}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -249,7 +251,7 @@ export default function ExportModal({
 
             {scope === 'divisi' && (
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>Pilih Divisi</Text>
+                <Text style={styles.sectionLabel}>{t('exportModal.selectDivision')}</Text>
                 {loadingDivisi ? (
                   <ActivityIndicator size="small" color="#2d5016" />
                 ) : (
@@ -281,10 +283,10 @@ export default function ExportModal({
             )}
 
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Periode</Text>
+              <Text style={styles.sectionLabel}>{t('exportModal.period')}</Text>
               <View style={styles.dateRow}>
                 <View style={styles.dateInputContainer}>
-                  <Text style={styles.dateLabel}>Dari</Text>
+                  <Text style={styles.dateLabel}>{t('exportModal.from')}</Text>
                   <TextInput
                     style={styles.dateInput}
                     value={startDate}
@@ -294,7 +296,7 @@ export default function ExportModal({
                   />
                 </View>
                 <View style={styles.dateInputContainer}>
-                  <Text style={styles.dateLabel}>Sampai</Text>
+                  <Text style={styles.dateLabel}>{t('exportModal.to')}</Text>
                   <TextInput
                     style={styles.dateInput}
                     value={endDate}
@@ -313,7 +315,7 @@ export default function ExportModal({
               onPress={onClose}
               disabled={loading}
             >
-              <Text style={styles.cancelButtonText}>Batal</Text>
+              <Text style={styles.cancelButtonText}>{t('exportModal.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.exportButton, loading && styles.exportButtonDisabled]}
@@ -325,7 +327,7 @@ export default function ExportModal({
               ) : (
                 <>
                   <Download size={20} color="#fff" />
-                  <Text style={styles.exportButtonText}>Export</Text>
+                  <Text style={styles.exportButtonText}>{t('exportModal.export')}</Text>
                 </>
               )}
             </TouchableOpacity>
