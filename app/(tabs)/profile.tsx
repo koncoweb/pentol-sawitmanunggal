@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { User, MapPin, Building2, Info, LogOut } from 'lucide-react-native';
+import { User, MapPin, Building2, Info, LogOut, Database } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import LanguageSelector from '@/components/LanguageSelector';
@@ -93,6 +93,21 @@ export default function ProfileScreen() {
         <Text style={styles.sectionTitle}>{t('common.settings')}</Text>
         <View style={styles.infoCard}>
           <LanguageSelector />
+          
+          <View style={styles.divider} />
+          
+          <TouchableOpacity 
+            style={styles.infoRow}
+            onPress={() => router.push('/sync-master')}
+          >
+            <View style={styles.infoIcon}>
+              <Database size={20} color="#2d5016" />
+            </View>
+            <View style={styles.infoContent}>
+              <Text style={styles.infoLabel}>Data Offline</Text>
+              <Text style={styles.infoValue}>Sinkronisasi Data Master</Text>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
 

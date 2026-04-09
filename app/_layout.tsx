@@ -70,6 +70,8 @@ function RootLayoutNav() {
         <Stack.Screen name="create-spb" />
         <Stack.Screen name="spb-list" />
         <Stack.Screen name="spb-detail" />
+        <Stack.Screen name="sync-master" />
+        <Stack.Screen name="sync-manager" />
         <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />

@@ -1,13 +1,38 @@
 import { Tabs, useRouter } from 'expo-router';
 import { Home, FileText, CheckSquare, BarChart3, Building2, MapPin, Settings, Shield, MessageCircle } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { TouchableOpacity, Text, StyleSheet, View } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, View, ActivityIndicator, Modal } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useState, useEffect } from 'react';
+import NetInfo from '@react-native-community/netinfo';
+import { syncMasterData } from '@/lib/offline';
 
 export default function TabLayout() {
   const { profile, signOut } = useAuth();
   const router = useRouter();
   const { t } = useTranslation();
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
+  useEffect(() => {
+    const performInitialSync = async () => {
+      const netInfo = await NetInfo.fetch();
+      if (netInfo.isConnected) {
+        setIsSyncing(true);
+        setSyncMessage('Sinkronisasi Data Master...');
+        try {
+          await syncMasterData();
+          console.log('Global master data sync complete');
+        } catch (err) {
+          console.error('Global sync master failed:', err);
+        } finally {
+          setIsSyncing(false);
+        }
+      }
+    };
+
+    performInitialSync();
+  }, []);
 
   const handleLogout = async () => {
     await signOut();
@@ -41,8 +66,18 @@ export default function TabLayout() {
   const visibleTabs = getTabsForRole();
 
   return (
-    <Tabs
-      screenOptions={{
+    <>
+      <Modal visible={isSyncing} transparent={true} animationType="fade">
+        <View style={styles.syncOverlay}>
+          <View style={styles.syncBox}>
+            <ActivityIndicator size="large" color="#2d5016" />
+            <Text style={styles.syncText}>{syncMessage}</Text>
+            <Text style={styles.syncSubText}>Mohon tunggu, sedang memperbarui data...</Text>
+          </View>
+        </View>
+      </Modal>
+      <Tabs
+        screenOptions={{
         headerStyle: {
           backgroundColor: '#2d5016',
         },
@@ -182,6 +217,7 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </>
   );
 }
 
@@ -197,5 +233,32 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
+  },
+  syncOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  syncBox: {
+    backgroundColor: '#fff',
+    padding: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    width: '80%',
+    maxWidth: 320,
+  },
+  syncText: {
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+  },
+  syncSubText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
   },
 });

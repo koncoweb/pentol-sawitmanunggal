@@ -29,10 +29,12 @@ const initDb = async (database: SQLite.SQLiteDatabase) => {
 
 export const runQuery = async (query: string, params: any[] = []) => {
     const database = await getLocalDb();
-    return await database.getAllAsync(query, params);
+    const safeParams = params.map(p => (p === undefined || p === null) ? '' : p);
+    return await database.getAllAsync(query, safeParams);
 };
 
 export const runCommand = async (query: string, params: any[] = []) => {
     const database = await getLocalDb();
-    return await database.runAsync(query, params);
+    const safeParams = params.map(p => (p === undefined || p === null) ? '' : p);
+    return await database.runAsync(query, safeParams);
 };
