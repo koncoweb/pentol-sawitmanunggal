@@ -18,7 +18,7 @@ import { getDbClient } from '@/lib/db';
 import { useOfflineData, runCommand, syncHarvestQueue, syncMasterData } from '@/lib/offline';
 import { ChevronLeft, Save, X, Check, Calendar, Image as ImageIcon, WifiOff } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import NetInfo from '@react-native-community/netinfo';
 
 import { useTranslation } from 'react-i18next';
@@ -35,6 +35,7 @@ interface Divisi {
 interface Blok {
   id: string;
   name: string;
+  tahun_tanam: number;
 }
 
 interface Pemanen {
@@ -311,14 +312,14 @@ export default function InputPanenScreen() {
                  foto_path, jumlah_brondolan_kg
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          `, [
-             formData.tanggal,
-             formData.divisi_id,
-             blokId,
-             formData.pemanen_id,
+             formData.tanggal || '',
+             formData.divisi_id || '',
+             blokId || '',
+             formData.pemanen_id || '',
              formData.tph_id || null,
-             parseInt(formData.rotasi),
-             bjd,
-             bjr,
+             parseInt(formData.rotasi) || 0,
+             bjd || 0,
+             bjr || 0,
              parseInt(formData.buah_masak) || 0,
              parseInt(formData.buah_mentah) || 0,
              parseInt(formData.buah_mengkal) || 0,
@@ -329,10 +330,10 @@ export default function InputPanenScreen() {
              parseInt(formData.jangkos) || 0,
              formData.keterangan || null,
              'pending',
-             userId,
-             formData.nomor_panen,
-             jjg,
-             localPhotoPath,
+             userId || '',
+             formData.nomor_panen || '',
+             jjg || 0,
+             localPhotoPath || null,
              parseFloat(formData.jumlah_brondolan_kg) || 0
          ]);
     }
@@ -432,14 +433,14 @@ export default function InputPanenScreen() {
                   $22, $23
                )
              `, [
-               formData.tanggal,
-               formData.divisi_id, 
-               blokId,
-               formData.pemanen_id,
+               formData.tanggal || '',
+               formData.divisi_id || '', 
+               blokId || '',
+               formData.pemanen_id || '',
                formData.tph_id || null,
-               parseInt(formData.rotasi),
-               bjd, 
-               bjr,
+               parseInt(formData.rotasi) || 0,
+               bjd || 0, 
+               bjr || 0,
                parseInt(formData.buah_masak) || 0,
                parseInt(formData.buah_mentah) || 0,
                parseInt(formData.buah_mengkal) || 0,
@@ -450,10 +451,10 @@ export default function InputPanenScreen() {
                parseInt(formData.jangkos) || 0,
                formData.keterangan || null,
                'submitted',
-               userId,
-               formData.nomor_panen,
-               jjg, 
-               uploadedPhotoUrl,
+               userId || '',
+               formData.nomor_panen || '',
+               jjg || 0, 
+               uploadedPhotoUrl || null,
                parseFloat(formData.jumlah_brondolan_kg) || 0
              ]);
              insertedCount++;
@@ -484,36 +485,8 @@ export default function InputPanenScreen() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handlePickImage = async () => {
-    console.log('handlePickImage triggered');
-    
-    if (Platform.OS === 'web') {
-      // On Web, Alert.alert with custom buttons is not supported.
-      // We'll default to opening the library which on mobile web usually offers Camera option too.
-      // Or we could use window.confirm but it's limited.
-      // Let's just launch the library for now as it's the standard web behavior.
-      handleLaunchLibrary();
-      return;
-    }
-
-    Alert.alert(
-      t('input.button.uploadPhoto'),
-      t('input.label.pickSource'),
-      [
-        {
-          text: t('input.button.camera'),
-          onPress: handleTakeImage,
-        },
-        {
-          text: t('input.button.gallery'),
-          onPress: handleLaunchLibrary,
-        },
-        {
-          text: t('input.button.cancel'),
-          style: 'cancel',
-        },
-      ]
-    );
+  const handlePickImage = () => {
+    handleTakeImage();
   };
 
   const handleLaunchLibrary = async () => {
@@ -658,13 +631,16 @@ export default function InputPanenScreen() {
           <Text style={styles.headerTitle}>{t('input.title')}</Text>
         </View>
         <View style={styles.headerRight}>
-          {isOffline && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10, backgroundColor: '#e74c3c', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
-              <WifiOff size={16} color="#fff" style={{ marginRight: 4 }} />
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>{t('input.offline')}</Text>
-            </View>
-          )}
-          <Calendar size={24} color="#fff" />
+          <TouchableOpacity 
+            style={styles.syncHeaderButton} 
+            onPress={() => router.push('/sync-manager')}
+          >
+            {isOffline ? (
+              <WifiOff size={20} color="#ffb74d" />
+            ) : (
+              <Text style={styles.syncHeaderButtonText}>Sync</Text>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -738,25 +714,14 @@ export default function InputPanenScreen() {
                 label={t('input.label.plantingYear')}
                 placeholder={t('input.placeholder.selectYear')}
                 value={formData.tahun_tanam}
-                items={[
-                  { label: '2010', value: '2010' },
-                  { label: '2011', value: '2011' },
-                  { label: '2012', value: '2012' },
-                  { label: '2013', value: '2013' },
-                  { label: '2014', value: '2014' },
-                  { label: '2015', value: '2015' },
-                  { label: '2016', value: '2016' },
-                  { label: '2017', value: '2017' },
-                  { label: '2018', value: '2018' },
-                  { label: '2019', value: '2019' },
-                  { label: '2020', value: '2020' },
-                  { label: '2021', value: '2021' },
-                  { label: '2022', value: '2022' },
-                  { label: '2023', value: '2023' },
-                  { label: '2024', value: '2024' },
-                  { label: '2025', value: '2025' },
-                ]}
-                onSelect={(value) => updateField('tahun_tanam', value)}
+                items={Array.from({ length: 2045 - 2008 + 1 }, (_, i) => 2045 - i).map(year => ({
+                  label: year.toString(),
+                  value: year.toString(),
+                }))}
+                onSelect={(value) => {
+                  updateField('tahun_tanam', value);
+                  updateField('blok_name', ''); // Reset blok when tahun tanam changes
+                }}
               />
             </View>
           </View>
@@ -777,15 +742,23 @@ export default function InputPanenScreen() {
             searchable={gangList.length > 5}
           />
 
-          <Dropdown
+          <EditableDropdown
             label={t('input.label.block')}
             placeholder={t('input.placeholder.selectBlock')}
             value={formData.blok_name}
-            items={blokList.map((blok) => ({
-              label: blok.name,
-              value: blok.name,
-            }))}
-            onSelect={(value) => updateField('blok_name', value)}
+            items={blokList
+              .filter(b => !formData.tahun_tanam || b.tahun_tanam?.toString() === formData.tahun_tanam)
+              .map((blok) => ({
+                label: blok.name,
+                value: blok.name,
+              }))}
+            onChangeText={(value) => {
+              updateField('blok_name', value);
+              const selectedBlok = blokList.find(b => b.name === value);
+              if (selectedBlok && selectedBlok.tahun_tanam) {
+                updateField('tahun_tanam', selectedBlok.tahun_tanam.toString());
+              }
+            }}
             required
             searchable={blokList.length > 5}
           />
@@ -1110,6 +1083,17 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     padding: 8,
+  },
+  syncHeaderButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  syncHeaderButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   backButton: {
     marginRight: 12,

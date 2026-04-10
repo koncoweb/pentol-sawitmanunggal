@@ -2,7 +2,7 @@ import { getDbClient } from '../db';
 import { getLocalDb, runCommand, runQuery } from './db';
 import { HarvestRecordQueueItem } from './types';
 import NetInfo from '@react-native-community/netinfo';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 let isSyncingQueue = false;
 
@@ -20,30 +20,27 @@ export const syncMasterData = async () => {
 
     // 1. Sync Divisi
     const { rows: divisiRows } = await neonClient.query('SELECT id, name, estate_name, rayon_id FROM divisi');
-    await runCommand('DELETE FROM divisi');
     for (const row of divisiRows) {
       await runCommand(
-        'INSERT INTO divisi (id, name, estate_name, region_name) VALUES (?, ?, ?, ?)',
+        'INSERT OR REPLACE INTO divisi (id, name, estate_name, region_name) VALUES (?, ?, ?, ?)',
         [row.id, row.name, row.estate_name, row.rayon_id || ''] // Using rayon_id as region_name for now
       );
     }
 
     // 2. Sync Gang
     const { rows: gangRows } = await neonClient.query('SELECT id, divisi_id, name FROM gang');
-    await runCommand('DELETE FROM gang');
     for (const row of gangRows) {
       await runCommand(
-        'INSERT INTO gang (id, divisi_id, name) VALUES (?, ?, ?)',
+        'INSERT OR REPLACE INTO gang (id, divisi_id, name) VALUES (?, ?, ?)',
         [row.id, row.divisi_id, row.name]
       );
     }
 
     // 3. Sync Blok
     const { rows: blokRows } = await neonClient.query('SELECT id, divisi_id, name, tahun_tanam FROM blok');
-    await runCommand('DELETE FROM blok');
     for (const row of blokRows) {
         await runCommand(
-            'INSERT INTO blok (id, divisi_id, name, tahun_tanam) VALUES (?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO blok (id, divisi_id, name, tahun_tanam) VALUES (?, ?, ?, ?)',
             [row.id, row.divisi_id, row.name, row.tahun_tanam]
         );
     }
@@ -54,10 +51,9 @@ export const syncMasterData = async () => {
         FROM pemanen p
         JOIN gang g ON p.gang_id = g.id
     `);
-    await runCommand('DELETE FROM pemanen');
     for (const row of pemanenRows) {
         await runCommand(
-            'INSERT INTO pemanen (id, divisi_id, gang_id, operator_code, name, active) VALUES (?, ?, ?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO pemanen (id, divisi_id, gang_id, operator_code, name, active) VALUES (?, ?, ?, ?, ?, ?)',
             [row.id, row.divisi_id, row.gang_id, row.operator_code, row.name, row.active ? 1 : 0]
         );
     }
@@ -68,10 +64,9 @@ export const syncMasterData = async () => {
         FROM tph t 
         JOIN blok b ON t.blok_id = b.id
     `);
-    await runCommand('DELETE FROM tph');
     for (const row of tphRows) {
         await runCommand(
-            'INSERT INTO tph (id, divisi_id, blok_id, nomor_tph, active) VALUES (?, ?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO tph (id, divisi_id, blok_id, nomor_tph, active) VALUES (?, ?, ?, ?, ?)',
             [row.id, row.divisi_id, row.blok_id, row.nomor_tph, row.active]
         );
     }
@@ -163,7 +158,7 @@ export const syncHarvestQueue = async () => {
                 // Using nomor_panen as unique constraint if available, or combining fields
                 const { rows: existing } = await neonClient.query(`
                     SELECT id FROM harvest_records 
-                    WHERE nomor_panen = $1 AND tanggal = $2 AND pemanen_id = $3 AND tph_id = $4
+                    WHERE nomor_panen = $1 AND tanggal = $2 AND pemanen_id = $3 AND (tph_id = $4 OR (tph_id IS NULL AND $4 IS NULL))
                 `, [item.nomor_panen, item.tanggal, item.pemanen_id, item.tph_id || null]);
 
                 if (existing.length > 0) {
