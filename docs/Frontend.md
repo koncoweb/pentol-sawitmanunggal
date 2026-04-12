@@ -1,322 +1,96 @@
 # Dokumentasi Frontend - PENTOL
 
-## Overview
+## Ringkasan
 
-Frontend aplikasi **PENTOL (Pencatatan Online)** - Harvest Management System dibangun menggunakan:
-- **Framework**: React Native dengan Expo SDK 54
-- **Navigation**: Expo Router (file-based routing)
-- **UI**: React Native core components dengan custom styling
-- **State Management**: React Context API
-- **Database**: Neon Database (PostgreSQL) via Serverless Driver
-- **Authentication**: Better Auth
-- **Offline Storage**: SQLite via expo-sqlite
-- **Styling**: StyleSheet (React Native)
-- **Platform**: Web (primary), iOS & Android
+Frontend PENTOL dibangun dengan Expo + React Native + Expo Router, dengan pendekatan **offline-first**:
+- Online: query langsung ke Neon PostgreSQL.
+- Offline: baca/tulis ke SQLite lokal.
+- Sinkronisasi: master data downsync (Neon → SQLite) dan transaksi panen upsync (SQLite queue → Neon).
 
-## Tech Stack
+## Stack Utama
 
-### Core Dependencies
-```json
-{
-  "expo": "~54.0.33",
-  "expo-router": "~6.0.23",
-  "react": "19.1.0",
-  "react-native": "0.81.5",
-  "@neondatabase/serverless": "^1.0.2",
-  "better-auth": "^1.4.10",
-  "expo-sqlite": "~16.0.10"
-}
-```
+- Expo SDK 54 (`expo`, `expo-router`)
+- React 19 + React Native 0.81
+- Auth client: Better Auth (`lib/auth-client.ts`)
+- DB client: Neon Serverless (`lib/db.ts`)
+- Offline store: `expo-sqlite` (`lib/offline`)
+- Network status: `@react-native-community/netinfo`
+- UI: RN core + komponen custom (`components/`)
 
-### UI & Navigation
-```json
-{
-  "lucide-react-native": "^0.544.0",
-  "@react-navigation/native": "^7.0.14",
-  "@react-navigation/bottom-tabs": "^7.2.0",
-  "react-native-safe-area-context": "~5.6.0"
-}
-```
+## Struktur Frontend
 
-### Export & Reporting
-```json
-{
-  "xlsx": "Latest version",
-  "jspdf": "Latest version",
-  "jspdf-autotable": "Latest version"
-}
-```
+- `app/_layout.tsx`: root stack + redirect auth.
+- `app/(tabs)/_layout.tsx`: tab layout berbasis role.
+- `app/(tabs)/profile.tsx`: profile + entry ke sync master (`/sync-master`).
+- `app/sync-master.tsx`: layar download/sinkron data master lokal.
+- `app/input-panen.tsx`: form input panen online/offline.
+- `components/Dropdown.tsx`: dropdown pilihan tunggal.
+- `components/EditableDropdown.tsx`: input bebas + pilihan.
+- `contexts/AuthContext.tsx`: session/user/profile state.
+- `lib/offline/hooks.ts`: helper fetch data master dengan fallback online/offline.
 
-## Project Structure
+## Alur Form Input Panen
 
-```
-project/
-├── app/                          # Routes (Expo Router)
-│   ├── _layout.tsx              # Root layout dengan AuthProvider
-│   ├── login.tsx                # Login screen
-│   ├── input-panen.tsx          # Form input data panen
-│   ├── report-detail.tsx        # Detail laporan dengan spreadsheet
-│   ├── +not-found.tsx           # 404 screen
-│   └── (tabs)/                  # Tab-based navigation
-│       ├── _layout.tsx          # Tab layout dengan role-based routing
-│       ├── index.tsx            # Dashboard Krani Panen
-│       ├── krani-buah.tsx       # Dashboard Krani Buah
-│       ├── mandor.tsx           # Dashboard Mandor
-│       ├── asisten.tsx          # Dashboard Asisten
-│       ├── estate.tsx           # Dashboard Estate Manager
-│       ├── regional.tsx         # Dashboard Regional GM
-│       ├── approval.tsx         # Approval screen (Mandor)
-│       ├── monitoring.tsx       # Monitoring screen
-│       ├── reports.tsx          # Reports screen
-│       ├── analytics.tsx        # Analytics screen
-│       └── profile.tsx          # Profile screen
-├── contexts/                    # React Context
-│   └── AuthContext.tsx          # Authentication state
-├── lib/                         # Libraries & utilities
-│   ├── i18n/                    # Internationalization (ID/EN)
-│   ├── offline/                 # Offline-first logic
-│   │   ├── db.ts                # SQLite configuration
-│   │   ├── schema.ts            # Local database schema
-│   │   ├── sync.ts              # Data synchronization logic
-│   │   └── hooks.ts             # Offline data hooks
-│   ├── auth-client.ts           # Better Auth client
-│   ├── db.ts                    # Neon Database client
-│   └── reportService.ts         # Service untuk laporan
-├── components/                  # Reusable components
-│   ├── Dropdown.tsx            # Dropdown selector component
-│   ├── MultiSelectDropdown.tsx # Multi-select dropdown component
-│   ├── EditableDropdown.tsx    # Editable dropdown (combobox) component
-│   └── ReportCard.tsx          # Card component untuk preview laporan
-└── hooks/                       # Custom hooks
-    └── useFrameworkReady.ts    # Framework initialization
+1. Screen mount:
+   - Coba `syncMasterData()`.
+   - Lanjut `syncHarvestQueue()`.
+2. Ambil data dropdown:
+   - `getDivisi`, `getGang`, `getBlok`, `getPemanen`, `getTPH`.
+3. Submit:
+   - Jika offline: simpan ke `harvest_records_queue`.
+   - Jika online: insert langsung ke `harvest_records`.
+   - Jika online gagal: fallback ke queue lokal.
 
-```
+Referensi:
+- `app/input-panen.tsx`
+- `lib/offline/sync.ts`
+- `lib/offline/hooks.ts`
 
-## Navigation Architecture
+## Perubahan Penting Terbaru (Reliability Offline Dropdown)
 
-### Root Layout
-**File:** `app/_layout.tsx`
+### 1) Sinkronisasi master dibuat lebih aman
 
-- Wraps app dengan `AuthProvider`
-- Handles authentication state
-- Auto-redirect berdasarkan session:
-  - No session dan di tabs → redirect ke `/login`
-  - Has session dan di login/setup → redirect ke `/(tabs)` sesuai role
-  - Routes lain (seperti `/input-panen`) → tidak ada redirect otomatis
-- Stack navigator untuk semua routes (tabs, login, input-panen, dll)
+- Ditambahkan lock proses master (`isSyncingMaster`) agar tidak race condition antar trigger sync.
+- Sinkronisasi master sekarang atomic dengan transaksi SQLite:
+  - `BEGIN IMMEDIATE`
+  - refresh penuh tabel master lokal
+  - `COMMIT` atau `ROLLBACK`
 
-### Tab Navigation
-**File:** `app/(tabs)/_layout.tsx`
+Lokasi perubahan:
+- `lib/offline/sync.ts`
 
-Role-based tab visibility:
+### 2) Refresh cache dropdown setelah sync
 
-| Role | Tabs Visible |
-|------|-------------|
-| Krani Panen | Dashboard, Profile |
-| Krani Buah | Dashboard, Profile |
-| Mandor | Dashboard, Approval, Profile |
-| Asisten | Dashboard, Monitoring, Profile |
-| Senior Asisten | Dashboard, Reports, Monitoring, Profile |
-| Estate Manager | Dashboard, Reports, Monitoring, Profile |
-| Regional GM | Dashboard, Reports, Analytics, Profile |
-| General Manager | Dashboard, Corporate Reports, Analytics, Profile |
-| Administrator | Dashboard, User Management, Profile |
+- Form input panen sekarang mengosongkan cache master lokal di memori dan memuat ulang data setelah:
+  - initial sync
+  - reconnect sync
+  - periodic sync
+- `loadDivisiData` sekarang mendukung `forceRefresh`.
 
-## State Management
+Lokasi perubahan:
+- `app/input-panen.tsx`
 
-### Auth Context
-**File:** `contexts/AuthContext.tsx`
+## Best Practices Frontend untuk Tim
 
-```typescript
-type AuthContextType = {
-  session: Session | null
-  user: User | null
-  profile: Profile | null
-  loading: boolean
-  signIn: (email, password) => Promise<void>
-  signOut: () => Promise<void>
-}
-```
+- Jangan jadikan cache in-memory sebagai source of truth master data.
+- Setelah sinkronisasi master sukses, selalu invalidate cache UI.
+- Untuk layar offline-critical, tampilkan indikator:
+  - last sync timestamp
+  - status sinkronisasi master
+- Hindari trigger sync paralel dari banyak screen tanpa lock global.
+- Jika menambah dropdown baru untuk mode offline:
+  - tambahkan tabel lokal/schema
+  - tambahkan downsync query
+  - tambahkan fallback hook online/offline
+  - tambahkan validasi coverage di layar sync master.
 
-**Usage:**
-```typescript
-const { profile, loading, signIn, signOut } = useAuth()
-```
+## Checklist Saat Menambah Fitur Frontend
 
-### State Flow
-1. App starts → Loading state
-2. Check session → Get user profile from Neon/Better Auth
-3. Profile loaded → Render appropriate dashboard
-4. Auth state change → Auto-update UI
-
-## Screens
-
-### Authentication
-
-#### Login Screen
-**File:** `app/login.tsx`
-
-Features:
-- Email/password input
-- Loading state during login
-- Error handling dengan Alert
-- Auto-redirect to dashboard on success
-- Keyboard-aware scrolling
-
-Design:
-- Brand colors (green theme)
-- Clean, modern UI
-- Accessible form inputs
-- Professional layout
-
-### Dashboards (Role-based)
-
-#### 1. Krani Panen Dashboard
-**File:** `app/(tabs)/index.tsx`
-
-Components:
-- Welcome header dengan nama user
-- Quick stats (Data Hari Ini, Pending Approval)
-- Menu cards:
-  - Input Data Panen
-  - Foto TPH
-  - Grading Buah
-  - Losses Monitoring
-- Info card dengan instructions
-
-#### 2. Krani Buah Dashboard
-**File:** `app/(tabs)/krani-buah.tsx`
-
-Components:
-- Welcome header
-- Stats (SPB Hari Ini, Truk Terkirim, Restan)
-- Menu cards:
-  - Buat SPB
-  - Data Truk
-  - Validasi Muatan
-  - Cek Restan
-- Alert card untuk reminders
-
-#### 3. Mandor Dashboard
-**File:** `app/(tabs)/mandor.tsx`
-
-Components:
-- Welcome header
-- Grid stats (Pending Approval, Target, Realisasi, Anggota Gang)
-- Task cards dengan urgency badges
-- Info card untuk guidelines
-
-#### 4. Asisten Dashboard
-**File:** `app/(tabs)/asisten.tsx`
-
-Components:
-- Welcome header
-- KPI cards dengan progress bars:
-  - Achievement vs RKH
-  - Quality Score
-  - Losses Rate
-- Gang performance cards
-- Action buttons
-
-#### 5. Estate Manager Dashboard
-**File:** `app/(tabs)/estate.tsx`
-
-Components:
-- Welcome header
-- Summary cards (Produksi, Achievement, Divisi, Pekerja)
-- Divisi performance list
-- Quick action buttons (Laporan, Analytics)
-
-#### 6. Regional GM Dashboard
-**File:** `app/(tabs)/regional.tsx`
-
-Components:
-- Welcome header
-- Regional statistics grid
-- Estate comparison cards
-- Analytics & Reports section
-
-#### 7. Senior Asisten & General Manager & Administrator
-**Note:** Dashboard untuk role baru (Senior Asisten, GM, Admin) akan mengikuti pola desain yang sama dengan role di atas:
-- **Senior Asisten**: Mirip Estate Manager tapi filter default set ke Rayon terkait.
-- **General Manager**: Mirip Regional GM tapi cakupan seluruh perusahaan.
-- **Administrator**: Dashboard khusus manajemen user (CRUD Users, Assign Roles/Locations).
-
-### Supporting Screens
-
-#### Approval Screen
-**File:** `app/(tabs)/approval.tsx`
-
-Features:
-- List pending approvals
-- Approval/reject buttons
-- Detailed harvest information
-- Status badges
-- Empty state
-
-#### Monitoring Screen
-**File:** `app/(tabs)/monitoring.tsx`
-
-Features:
-- KPI cards dengan progress bars
-- Real-time indicators
-- Achievement metrics
-- Quality metrics
-
-#### Reports Screen
-**File:** `app/(tabs)/reports.tsx`
-
-Features:
-- Report type selection (Harian, Mingguan, Bulanan)
-- Navigation ke detail laporan
-- Report cards dengan icon
-- Export functionality (future)
-- Report history
-- Empty state
-
-**File:** `app/report-detail.tsx`
-
-Halaman detail laporan dengan format spreadsheet lengkap:
-
-**Features:**
-- **Tabel Spreadsheet Horizontal:**
-  - 24 kolom data panen
-  - Horizontal scroll untuk melihat semua kolom
-  - Vertical scroll untuk melihat semua data
-  - Fixed header saat scroll
-  - Alternating row colors (zebra striping)
-  - Cell borders untuk clarity
-
-- **Header Dinamis:**
-  - Judul sesuai tipe laporan (Harian/Mingguan/Bulanan)
-  - Counter total data
-  - Back button untuk kembali
-  - Filter toggle button
-
-- **Filter Panel:**
-  - Filter berdasarkan Divisi (live search)
-  - Filter berdasarkan Tanggal (partial match)
-  - Slide in/out animation
-  - TextInput dengan placeholder
-
-- **Foto Hasil Panen:**
-  - Thumbnail 60x60px dalam tabel
-  - Tap untuk full screen view
-  - Modal overlay dengan fade animation
-  - Close button di top-right
-  - Placeholder icon untuk data tanpa foto
-
-- **Data Loading:**
-  - Loading indicator saat fetch data
-  - Date range filter otomatis sesuai tipe laporan
-  - Limit 100 records untuk performa
-  - Error handling
-
-- **Performance:**
-  - Optimized query dengan index
-  - Lazy image loading
-  - Cached images
-  - Smooth scrolling
+- Apakah route baru sudah masuk flow auth/role?
+- Apakah fitur tetap jalan saat offline?
+- Apakah data input punya fallback queue?
+- Apakah data referensi dropdown tersinkron ke SQLite?
+- Apakah state/cache dibersihkan setelah sync?
 
 **Kolom Tabel:**
 ```

@@ -1,263 +1,97 @@
 # Dokumentasi Backend - PENTOL
 
-## Overview
+## Ringkasan Arsitektur
 
-Backend aplikasi **PENTOL (Pencatatan Online)** - Harvest Management System menggunakan arsitektur serverless dengan komponen utama:
-- **Database**: Neon Database (PostgreSQL)
-- **Authentication**: Better Auth
-- **Data Access**: Neon Serverless Driver (HTTP-based)
-- **Offline Sync**: Custom synchronization logic antara SQLite (Mobile) dan Neon (Server).
+Backend PENTOL bersifat serverless dan berpusat pada Neon PostgreSQL:
+- Database: Neon Postgres
+- Auth: Better Auth (schema `neon_auth`)
+- Akses data: `@neondatabase/serverless` langsung dari app
+- Offline bridge: SQLite lokal + mekanisme sinkronisasi custom
 
-## Authentication
+Dokumen ini fokus pada perilaku data dan panduan operasional teknis.
 
-### Provider
-Menggunakan **Better Auth** untuk manajemen user, sesi, dan keamanan.
+## Komponen Backend di Repo
 
-### Configuration
-**File:** `lib/auth-client.ts`
+- `lib/db.ts`  
+  Koneksi client PostgreSQL memakai `EXPO_PUBLIC_NEON_DATABASE_URL`.
 
-```typescript
-import { createAuthClient } from "better-auth/react"
+- `lib/auth-client.ts`  
+  Better Auth client untuk login/session/reset.
 
-export const authClient = createAuthClient({
-    baseURL: process.env.EXPO_PUBLIC_AUTH_URL
-})
-```
+- `lib/offline/sync.ts`  
+  Sinkronisasi:
+  - `syncMasterData` untuk master data
+  - `syncHarvestQueue` untuk antrean transaksi offline
 
-### Auth Methods
+- `supabase/migrations/*.sql`  
+  Riwayat DDL yang membentuk schema saat ini.
 
-#### Sign In
-```typescript
-await authClient.signIn.email({
-  email: string,
-  password: string
-})
-```
+## Data Model Inti
 
-#### Sign Out
-```typescript
-await authClient.signOut()
-```
+### Schema `public` (utama)
+- Master: `divisi`, `gang`, `blok`, `tph`, `pemanen`, `estates`, `rayon`, `vehicles`, `drivers`, `loaders`
+- Transaksi: `harvest_records`, `harvest_photos`, `spb`, `spb_items`, `spb_loaders`, `harvest_assignments`
+- Identitas aplikasi: `profiles`
 
-## Database Client
+### Schema `neon_auth`
+- `user`, `session`, `account`, `verification`, dll untuk lifecycle autentikasi.
 
-### Neon Client Setup
+## Alur Sinkronisasi Offline
 
-**File:** `lib/db.ts`
+### 1) Downsync master (Neon → SQLite)
 
-Client dikonfigurasi menggunakan `@neondatabase/serverless` untuk koneksi PostgreSQL via HTTP/WebSockets yang efisien untuk lingkungan mobile/web.
+Master data yang dipakai dropdown di form input panen:
+- `divisi`
+- `gang`
+- `blok`
+- `pemanen`
+- `tph`
 
-```typescript
-import { neonConfig, Pool } from '@neondatabase/serverless';
+Perubahan terbaru:
+- Sinkronisasi master sekarang:
+  - memakai lock proses (`isSyncingMaster`) agar tidak paralel,
+  - memakai transaksi SQLite (atomic),
+  - refresh penuh dataset untuk mencegah data parsial.
 
-export const getDbClient = async () => {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  return pool;
-};
-```
+### 2) Upsync queue (SQLite → Neon)
 
-### Data Storage Strategy
+Data panen offline disimpan ke `harvest_records_queue` lalu dikirim saat online:
+- upload foto ke `harvest_photos`,
+- insert data utama ke `harvest_records`,
+- update status queue ke `synced`/`error`.
 
-#### 1. Master Data
-Data master (Divisi, Blok, Pemanen, dll) disimpan di Neon dan disinkronkan ke SQLite lokal untuk penggunaan offline.
+## Risiko Teknis yang Harus Dijaga
 
-#### 2. Harvest Records
-Data transaksi panen yang dikirim dari mobile akan disimpan di tabel `harvest_records`.
+- Koneksi DB dari client app berarti env URL DB sangat sensitif.
+- Sinkronisasi master perlu tetap atomic setiap ada perubahan query master.
+- Perubahan schema master Neon harus diikuti perubahan schema SQLite + sinkronisasi.
+- Cache UI tidak boleh dijadikan source of truth.
 
-#### 3. Photo Storage (Database-based)
-Foto hasil panen disimpan langsung di database dalam tabel `harvest_photos` menggunakan kolom `TEXT` (Base64) atau `BYTEA`.
-- **Table**: `harvest_photos`
-- **Columns**: `id` (UUID), `photo_data` (TEXT/Base64), `mime_type` (TEXT), `created_at` (TIMESTAMP).
+## Pedoman Perubahan Backend
 
-## Offline Synchronization Logic
+Saat menambah/mengubah tabel yang dipakai offline dropdown:
+1. Ubah migration/schema server.
+2. Ubah `lib/offline/schema.ts` jika butuh mirror lokal.
+3. Ubah query `syncMasterData` untuk tabel baru/kolom baru.
+4. Ubah `lib/offline/hooks.ts` agar fallback online/offline tetap konsisten.
+5. Uji:
+   - sync master sukses,
+   - dropdown online/offline konsisten,
+   - queue transaksi tetap bisa sync.
 
-Backend mendukung sinkronisasi dua arah:
+## Checklist Operasional
 
-### 1. Downward Sync (Master Data)
-Mobile menarik data terbaru dari tabel master untuk memastikan operasional lapangan tetap berjalan meskipun tanpa koneksi internet.
+- Cek project Neon aktif dan branch default.
+- Cek jumlah data master Neon vs SQLite setelah sync.
+- Cek tabel orphan (integritas relasi master).
+- Cek queue `pending/error` secara berkala.
+- Cek error sinkronisasi foto jika ada banyak retry.
 
-Tabel yang disinkronkan:
-- `divisi`: Data afdeling/divisi.
-- `gang`: Data kemandoran.
-- `blok`: Data blok kebun beserta tahun tanam.
-- `pemanen`: Data karyawan pemanen (operator).
-- `tph`: Data Tempat Pengumpulan Hasil.
+## Catatan Keamanan
 
-### 2. Upward Sync (Transaction Data)
-Proses pengiriman data panen dari mobile ke server mengikuti alur:
-1. **Photo Upload**: Foto panen diubah menjadi Base64 dan di-insert ke tabel `harvest_photos`.
-2. **ID Retrieval**: Server mengembalikan UUID untuk foto tersebut.
-3. **Record Insertion**: Data transaksi panen di-insert ke `harvest_records` dengan `foto_url` menggunakan format `db-photo://{UUID}`.
-4. **Local Update**: Status di SQLite lokal diubah menjadi `synced`.
-
-## Security & RLS (Row Level Security)
-
-Keamanan data di Neon Database dikelola menggunakan PostgreSQL RLS:
-
-- **Authenticated Users**: Hanya user yang terautentikasi via Better Auth yang dapat mengakses data.
-- **Role-based Access**:
-    - `krani_panen`: Hanya dapat melihat dan menginput data di divisi mereka sendiri.
-    - `mandor`: Dapat melihat dan menyetujui data dari gang/kemandoran mereka.
-    - `administrator`: Akses penuh ke seluruh data.
-
-## Report Service & Export
-
-### Overview
-Service untuk mengambil data laporan dan export ke format Excel/PDF.
-
-**Files:**
-- `lib/reportService.ts` - Service untuk fetch data laporan dari database
-- `lib/exportUtils.ts` - Utility functions untuk export ke Excel dan PDF
-
-### Report Service
-
-**File:** `lib/reportService.ts`
-
-#### Functions
-
-##### `fetchReportData(filter: ReportFilter)`
-Mengambil data harvest records dari database dengan filter.
-
-**Parameters:**
-- `startDate`: Date - Tanggal mulai periode
-- `endDate`: Date - Tanggal akhir periode
-- `divisiId` (optional): string - Filter per divisi
-- `gangId` (optional): string - Filter per gang
-
-**Returns:** `Promise<HarvestRecordRaw[]>`
-
-**Query:**
-```sql
-SELECT
-  hr.id,
-  hr.tanggal,
-  d.name as divisi_name,
-  g.name as gang_name,
-  b.name as blok_name,
-  p.name as pemanen_name,
-  hr.hasil_panen_jjg,
-  hr.foto_url
-FROM harvest_records hr
-LEFT JOIN divisi d ON hr.divisi_id = d.id
-LEFT JOIN blok b ON hr.blok_id = b.id
-LEFT JOIN pemanen p ON hr.pemanen_id = p.id
-LEFT JOIN gang g ON p.gang_id = g.id
-WHERE hr.tanggal >= $1 AND hr.tanggal <= $2
-```
-
-##### `transformToExportFormat(records: HarvestRecordRaw[])`
-Mengubah data raw dari database ke format yang siap export.
-
-**Parameters:**
-- `records`: Array of harvest records dari database
-
-**Returns:** `ExportRecord[]` - Array of formatted records
-
-**Transformations:**
-- Format tanggal ke 'dd/mm/yyyy'
-- Format waktu ke 'HH:mm:ss'
-- Join array fields (blok_names, pemanen_details) menjadi string
-- Handle null values dengan default empty string
-
-### Export Utils
-
-**File:** `lib/exportUtils.ts`
-
-**Dependencies:**
-- `xlsx` - Library untuk Excel export
-- `jspdf` - Library untuk PDF generation
-- `jspdf-autotable` - Plugin untuk table di PDF
-
-#### Functions
-
-##### `exportToExcel(data: ExportRecord[], filename: string)`
-Export data ke format Excel (.xlsx).
-
-**Features:**
-- Custom column headers (Bahasa Indonesia)
-- Auto column width
-- Professional formatting
-- Filename dengan timestamp: `{filename}_{YYYY-MM-DD}.xlsx`
-
-**Implementation:**
-```typescript
-const ws = XLSX.utils.json_to_sheet(data);
-const wb = XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb, ws, 'Laporan Panen');
-XLSX.writeFile(wb, `${filename}_${timestamp}.xlsx`);
-```
-
-##### `exportToPDF(data: ExportRecord[], filename: string, title: string)`
-Export data ke format PDF landscape dengan table.
-
-**Features:**
-- Landscape orientation untuk tabel lebar
-- Custom title dan header
-- Professional table styling
-- Green header sesuai brand (#2d5016)
-- Alternating row colors untuk readability
-- Auto page breaks
-- Filename dengan timestamp: `{filename}_{YYYY-MM-DD}.pdf`
-
-**Implementation:**
-```typescript
-const doc = new jsPDF({
-  orientation: 'landscape',
-  unit: 'mm',
-  format: 'a4',
-});
-
-autoTable(doc, {
-  head: [headers],
-  body: tableData,
-  styles: { fontSize: 7, cellPadding: 2 },
-  headStyles: { fillColor: [45, 80, 22] },
-  alternateRowStyles: { fillColor: [245, 245, 245] }
-});
-
-doc.save(`${filename}_${timestamp}.pdf`);
-```
-
-### Data Flow
-
-```
-User clicks Export
-    ↓
-ExportModal Component
-    ↓
-Select format (Excel/PDF)
-    ↓
-fetchReportData(filter)
-    ↓
-Query Neon Database via lib/db.ts
-    ↓
-transformToExportFormat(rawData)
-    ↓
-exportToExcel() or exportToPDF()
-    ↓
-File downloaded to user's device
-```
-
-## API Routes
-
-### Current Status
-Saat ini aplikasi tidak menggunakan API routes custom (Express/Next.js). Semua operasi database dilakukan langsung dari client menggunakan `@neondatabase/serverless` yang mendukung koneksi PostgreSQL via HTTP/WebSockets. Keamanan dikelola melalui PostgreSQL RLS (Row Level Security).
-
-## Data Access Patterns
-
-### By Role
-
-#### Krani Panen
-- SELECT: profiles (own), divisi (own), gang (in divisi)
-- INSERT: harvest_records, grading, losses (future)
-
-#### Krani Buah
-- SELECT: profiles (own), divisi (own), approved harvests
-- INSERT: spb, transport_logs (future)
-
-#### Mandor
-- SELECT: profiles (own + gang members), gang (own), harvest_records (gang)
-- UPDATE: harvest_records.status (approve/reject)
+- Jangan commit token/API key/connection string ke repo.
+- Hindari menampilkan secret di log.
+- Gunakan role DB dan policy yang minimal sesuai kebutuhan.
 
 #### Asisten
 - SELECT: All data in own divisi

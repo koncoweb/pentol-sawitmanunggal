@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, ActivityIndicator, Text, SafeAreaView, ScrollView, TouchableOpacity, Image, Alert, Platform, TextInput, KeyboardAvoidingView } from 'react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
@@ -23,7 +23,7 @@ export default function ChatScreen() {
   const [loading, setLoading] = useState(true);
   const [chatReady, setChatReady] = useState(false);
   const [currentView, setCurrentView] = useState<'conversation' | 'chat' | 'setting'>('conversation');
-  const [userDirectory, setUserDirectory] = useState<Array<{ id: string; full_name: string | null; role: string; photo_url: string | null }>>([]);
+  const [userDirectory, setUserDirectory] = useState<{ id: string; full_name: string | null; role: string; photo_url: string | null }[]>([]);
   const [userDirectoryLoading, setUserDirectoryLoading] = useState(false);
   const [webChat, setWebChat] = useState<any | null>(null);
   const [webSelectedUserId, setWebSelectedUserId] = useState<string | null>(null);
@@ -31,17 +31,6 @@ export default function ChatScreen() {
   const [webInput, setWebInput] = useState('');
   const webScrollRef = useRef<any>(null);
   const [incomingNotification, setIncomingNotification] = useState<{ fromId: string; fromName: string | null; text: string } | null>(null);
-
-  useEffect(() => {
-    if (user?.id) {
-      if (Platform.OS === 'web') {
-        initChatWeb(user.id);
-      } else {
-        initChat(user.id);
-      }
-      loadUserDirectory(user.id);
-    }
-  }, [user, profile?.id]);
 
   useEffect(() => {
     if (!webChat) return;
@@ -85,7 +74,7 @@ export default function ChatScreen() {
     };
   }, [webChat, webSelectedUserId, user, userDirectory]);
 
-  const loadUserDirectory = async (currentUserId: string) => {
+  const loadUserDirectory = useCallback(async (currentUserId: string) => {
     try {
       setUserDirectoryLoading(true);
       const db = await getDbClient();
@@ -99,7 +88,7 @@ export default function ChatScreen() {
     } finally {
       setUserDirectoryLoading(false);
     }
-  };
+  }, []);
 
   const startPrivateChat = async (targetUserId: string) => {
     if (!chatReady) {
@@ -154,7 +143,7 @@ export default function ChatScreen() {
     }
   };
 
-  const initChatWeb = async (userId: string) => {
+  const initChatWeb = useCallback(async (userId: string) => {
     try {
       setLoading(true);
       setChatReady(false);
@@ -214,7 +203,7 @@ export default function ChatScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [t]);
 
   const startWebPrivateChat = async (targetUserId: string) => {
     if (!webChat) {
@@ -289,7 +278,7 @@ export default function ChatScreen() {
     }
   };
 
-  const initChat = async (userId: string) => {
+  const initChat = useCallback(async (userId: string) => {
     try {
       setLoading(true);
       setChatReady(false);
@@ -368,7 +357,18 @@ export default function ChatScreen() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [profile?.full_name, t, user?.email]);
+
+  useEffect(() => {
+    if (user?.id) {
+      if (Platform.OS === 'web') {
+        initChatWeb(user.id);
+      } else {
+        initChat(user.id);
+      }
+      loadUserDirectory(user.id);
+    }
+  }, [initChat, initChatWeb, loadUserDirectory, user?.id]);
 
   if (!user) {
     return (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,12 @@ import {
 import { useRouter, useNavigation } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDbClient } from '@/lib/db';
-import { useOfflineData, runCommand, syncHarvestQueue, syncMasterData } from '@/lib/offline';
+import { useOfflineData, runCommand, runQuery, syncHarvestQueue, syncMasterData } from '@/lib/offline';
 import { ChevronLeft, Save, X, Check, Calendar, Image as ImageIcon, WifiOff } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import NetInfo from '@react-native-community/netinfo';
+import * as SQLite from 'expo-sqlite';
 
 import { useTranslation } from 'react-i18next';
 import Dropdown from '@/components/Dropdown';
@@ -77,59 +78,10 @@ export default function InputPanenScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const { profile, session, user, loading: authLoading } = useAuth();
-  const { isOffline, getDivisi, getGang, getBlok, getPemanen, getTPH } = useOfflineData();
+  const { isOffline } = useOfflineData();
   const [loading, setLoading] = useState(false);
   const [isFetchingData, setIsFetchingData] = useState(false); // State for loading indicator
   const scrollViewRef = useRef<ScrollView>(null);
-
-  useEffect(() => {
-    // Initial sync
-    const performInitialSync = async () => {
-      try {
-        await syncMasterData();
-        console.log('Initial master data sync complete');
-        // Refresh local lists after sync
-        loadDivisiList();
-        if (formData.divisi_id) {
-          loadDivisiData(formData.divisi_id);
-        }
-      } catch (err) {
-        console.error('Initial sync master failed:', err);
-      }
-      
-      try {
-        await syncHarvestQueue();
-      } catch (err) {
-        console.error('Initial sync queue failed:', err);
-      }
-    };
-
-    performInitialSync();
-
-    // Trigger sync when connection is restored
-    const unsubscribeNet = NetInfo.addEventListener((state: any) => {
-      if (state.isConnected) {
-        console.log('Connection restored, triggering sync...');
-        syncHarvestQueue().catch(err => console.error('Auto-sync after reconnect failed:', err));
-      }
-    });
-
-    // Set up periodic sync every 5 minutes
-    const syncInterval = setInterval(async () => {
-      const state = await NetInfo.fetch();
-      if (state.isConnected) {
-        console.log('Performing periodic background sync...');
-        syncMasterData().catch(err => console.error('Periodic master sync failed:', err));
-        syncHarvestQueue().catch(err => console.error('Periodic queue sync failed:', err));
-      }
-    }, 5 * 60 * 1000); // 5 minutes
-
-    return () => {
-      clearInterval(syncInterval);
-      unsubscribeNet();
-    };
-  }, []);
-
   const dataCache = useRef<Record<string, {
     gang: Gang[],
     blok: Blok[],
@@ -141,21 +93,20 @@ export default function InputPanenScreen() {
   const [pemanenList, setPemanenList] = useState<Pemanen[]>([]);
   const [tphList, setTphList] = useState<TPH[]>([]);
   const [gangList, setGangList] = useState<Gang[]>([]);
-
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-
-  // Form state
+  const activeDivisiRef = useRef<string>('');
+  const masterCacheRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formData, setFormData] = useState({
     tanggal: new Date().toISOString().split('T')[0],
     divisi_id: profile?.divisi_id || '',
     tahun_tanam: '',
     gang_id: '',
     blok_ids: [] as string[],
-    blok_name: '', // Added for EditableDropdown
+    blok_name: '',
     pemanen_id: '',
     tph_id: '',
     rotasi: '',
@@ -174,6 +125,189 @@ export default function InputPanenScreen() {
     keterangan: '',
   });
 
+  const loadDivisiData: (divisiId: string, options?: { forceRefresh?: boolean }) => Promise<void> = useCallback(async (divisiId: string, options?: { forceRefresh?: boolean }) => {
+    if (!divisiId) return;
+
+    if (!options?.forceRefresh && dataCache.current[divisiId]) {
+      console.log('Loading data from cache for divisi:', divisiId);
+      const cached = dataCache.current[divisiId];
+      setGangList(cached.gang);
+      setBlokList(cached.blok);
+      setPemanenList(cached.pemanen);
+      setTphList(cached.tph);
+      return;
+    }
+
+    setIsFetchingData(true);
+    try {
+      console.log('Loading local data for divisi:', divisiId);
+
+      const [gangRows, blokRows, pemanenRows, tphRows] = await Promise.all([
+        runQuery('SELECT id, name FROM gang WHERE divisi_id = ? ORDER BY name', [divisiId]),
+        runQuery('SELECT id, name, tahun_tanam FROM blok WHERE divisi_id = ? ORDER BY name', [divisiId]),
+        runQuery('SELECT id, operator_code, name, gang_id FROM pemanen WHERE divisi_id = ? AND active = 1 ORDER BY name', [divisiId]),
+        runQuery('SELECT id, nomor_tph FROM tph WHERE divisi_id = ? ORDER BY nomor_tph', [divisiId])
+      ]);
+
+      const newGangList = (gangRows || []) as any[];
+      const newBlokList = (blokRows || []) as any[];
+      const newPemanenList = (pemanenRows || []) as any[];
+      const newTphList = (tphRows || []) as any[];
+
+      setGangList(newGangList);
+      setBlokList(newBlokList);
+      setPemanenList(newPemanenList);
+      setTphList(newTphList);
+
+      dataCache.current[divisiId] = {
+        gang: newGangList,
+        blok: newBlokList,
+        pemanen: newPemanenList,
+        tph: newTphList
+      };
+
+      console.log('Loaded local data:', {
+        gang: newGangList.length,
+        blok: newBlokList.length,
+        pemanen: newPemanenList.length,
+        tph: newTphList.length,
+      });
+    } catch (error) {
+      console.error('Error loading divisi data:', error);
+      Alert.alert(
+        'Error Loading Data',
+        'Gagal memuat data divisi. Silakan coba lagi.',
+        [
+          { text: 'Batal', style: 'cancel' },
+          { text: 'Coba Lagi', onPress: () => loadDivisiData(divisiId, { forceRefresh: true }) }
+        ]
+      );
+    } finally {
+      setIsFetchingData(false);
+    }
+  }, []);
+
+  const loadDivisiList = useCallback(async () => {
+    try {
+      const rows = await runQuery('SELECT id, name, estate_name FROM divisi ORDER BY name');
+      console.log('Loaded local divisi:', rows?.length);
+      setDivisiList(rows as any[]);
+    } catch (error) {
+      console.error('Error loading divisi list:', error);
+    }
+  }, []);
+
+  const clearMasterDataCache = () => {
+    dataCache.current = {};
+  };
+
+  const refreshMasterDataForForm: () => Promise<void> = useCallback(async () => {
+    clearMasterDataCache();
+    await loadDivisiList();
+    const targetDivisiId = activeDivisiRef.current || profile?.divisi_id;
+    if (targetDivisiId) {
+      await loadDivisiData(targetDivisiId, { forceRefresh: true });
+    }
+  }, [loadDivisiData, loadDivisiList, profile?.divisi_id]);
+
+  useEffect(() => {
+    activeDivisiRef.current = formData.divisi_id || profile?.divisi_id || '';
+  }, [formData.divisi_id, profile?.divisi_id]);
+
+  useEffect(() => {
+    // Initial sync
+    const performInitialSync = async () => {
+      try {
+        await syncMasterData();
+        console.log('Initial master data sync complete');
+        await refreshMasterDataForForm();
+      } catch (err) {
+        console.error('Initial sync master failed:', err);
+      }
+      
+      try {
+        await syncHarvestQueue();
+      } catch (err) {
+        console.error('Initial sync queue failed:', err);
+      }
+    };
+
+    performInitialSync();
+
+    // Trigger sync when connection is restored
+    const unsubscribeNet = NetInfo.addEventListener((state: any) => {
+      if (state.isConnected) {
+        console.log('Connection restored, triggering sync...');
+        (async () => {
+          try {
+            await syncMasterData();
+            await refreshMasterDataForForm();
+          } catch (err) {
+            console.error('Auto-sync master after reconnect failed:', err);
+          }
+
+          try {
+            await syncHarvestQueue();
+          } catch (err) {
+            console.error('Auto-sync queue after reconnect failed:', err);
+          }
+        })();
+      }
+    });
+
+    // Set up periodic sync every 5 minutes
+    const syncInterval = setInterval(async () => {
+      const state = await NetInfo.fetch();
+      if (state.isConnected) {
+        console.log('Performing periodic background sync...');
+        (async () => {
+          try {
+            await syncMasterData();
+            await refreshMasterDataForForm();
+          } catch (err) {
+            console.error('Periodic master sync failed:', err);
+          }
+
+          try {
+            await syncHarvestQueue();
+          } catch (err) {
+            console.error('Periodic queue sync failed:', err);
+          }
+        })();
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    return () => {
+      clearInterval(syncInterval);
+      unsubscribeNet();
+    };
+  }, [refreshMasterDataForForm]);
+
+  useEffect(() => {
+    const subscription = SQLite.addDatabaseChangeListener((event: any) => {
+      if (event?.databaseName !== 'offline.db') return;
+      if (!['divisi', 'gang', 'blok', 'pemanen', 'tph'].includes(event?.tableName)) return;
+
+      if (masterCacheRefreshTimerRef.current) {
+        clearTimeout(masterCacheRefreshTimerRef.current);
+      }
+
+      masterCacheRefreshTimerRef.current = setTimeout(() => {
+        refreshMasterDataForForm().catch((error) => {
+          console.error('Error refreshing master cache after db change:', error);
+        });
+      }, 250);
+    });
+
+    return () => {
+      if (masterCacheRefreshTimerRef.current) {
+        clearTimeout(masterCacheRefreshTimerRef.current);
+        masterCacheRefreshTimerRef.current = null;
+      }
+      subscription.remove();
+    };
+  }, [refreshMasterDataForForm]);
+
   useEffect(() => {
     console.log('InputPanenScreen mounted v2 (Neon DB Upload Active)', profile);
     loadDivisiList();
@@ -190,88 +324,14 @@ export default function InputPanenScreen() {
       }
       loadDivisiData(divisiId);
     }
-  }, [profile]);
+  }, [profile, loadDivisiData, loadDivisiList, formData.divisi_id]);
 
   useEffect(() => {
     // Load data ketika divisi berubah
     if (formData.divisi_id && formData.divisi_id !== profile?.divisi_id) {
       loadDivisiData(formData.divisi_id);
     }
-  }, [formData.divisi_id]);
-
-  const loadDivisiList = async () => {
-    try {
-      const rows = await getDivisi();
-      console.log('Loaded divisi:', rows?.length);
-      setDivisiList(rows as any[]);
-    } catch (error) {
-      console.error('Error loading divisi list:', error);
-    }
-  };
-
-  const loadDivisiData = async (divisiId: string) => {
-    if (!divisiId) return;
-
-    // Check cache first
-    if (dataCache.current[divisiId]) {
-      console.log('Loading data from cache for divisi:', divisiId);
-      const cached = dataCache.current[divisiId];
-      setGangList(cached.gang);
-      setBlokList(cached.blok);
-      setPemanenList(cached.pemanen);
-      setTphList(cached.tph);
-      return;
-    }
-
-    setIsFetchingData(true);
-    try {
-      console.log('Loading data for divisi:', divisiId);
-      
-      const [gangList, blokList, pemanenList, tphList] = await Promise.all([
-        getGang(divisiId),
-        getBlok(divisiId),
-        getPemanen(divisiId),
-        getTPH(divisiId)
-      ]);
-
-      const newGangList = (gangList || []) as any[];
-      const newBlokList = (blokList || []) as any[];
-      const newPemanenList = (pemanenList || []) as any[];
-      const newTphList = (tphList || []) as any[];
-
-      setGangList(newGangList);
-      setBlokList(newBlokList);
-      setPemanenList(newPemanenList);
-      setTphList(newTphList);
-
-      // Save to cache
-      dataCache.current[divisiId] = {
-        gang: newGangList,
-        blok: newBlokList,
-        pemanen: newPemanenList,
-        tph: newTphList
-      };
-
-      console.log('Loaded data:', {
-        gang: newGangList.length,
-        blok: newBlokList.length,
-        pemanen: newPemanenList.length,
-        tph: newTphList.length,
-      });
-    } catch (error) {
-      console.error('Error loading divisi data:', error);
-      Alert.alert(
-        'Error Loading Data',
-        'Gagal memuat data divisi. Silakan coba lagi.',
-        [
-          { text: 'Batal', style: 'cancel' },
-          { text: 'Coba Lagi', onPress: () => loadDivisiData(divisiId) }
-        ]
-      );
-    } finally {
-      setIsFetchingData(false);
-    }
-  };
+  }, [formData.divisi_id, loadDivisiData, profile?.divisi_id]);
 
   const saveToOfflineQueue = async (finalBlokIds: string[], userId: string) => {
     const jjg = parseFloat(formData.hasil_panen_bjd) || 0;

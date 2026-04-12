@@ -5,12 +5,14 @@
     "jsx": "react-native",
     "skipLibCheck": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@tencentcloud/chat-uikit-react-native": ["./types/tencentcloud-chat-uikit-react-native-shim"]
     }
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    "**/*.d.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"

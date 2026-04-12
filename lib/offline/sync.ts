@@ -4,94 +4,306 @@ import { HarvestRecordQueueItem } from './types';
 import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
 
-let isSyncingQueue = false;
+let masterSyncPromise: Promise<void> | null = null;
+let queueSyncPromise: Promise<void> | null = null;
+
+const queryWithFallback = async (client: any, queries: string[]) => {
+  let lastError: any;
+  for (const query of queries) {
+    try {
+      return await client.query(query);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+};
+
+const toText = (value: any) => (value === null || value === undefined ? '' : String(value).trim());
+const toNullableInt = (value: any) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const dedupeById = <T extends { id: string }>(rows: T[]) => {
+  const map = new Map<string, T>();
+  for (const row of rows) {
+    if (row.id) {
+      map.set(row.id, row);
+    }
+  }
+  return Array.from(map.values());
+};
+
+const runExclusiveWriteTransaction = async (database: any, task: (tx: any) => Promise<void>) => {
+  if (typeof database.withExclusiveTransactionAsync === 'function') {
+    await database.withExclusiveTransactionAsync(async (tx: any) => {
+      await task(tx);
+    });
+    return;
+  }
+
+  await database.execAsync('BEGIN IMMEDIATE TRANSACTION');
+  try {
+    await task(database);
+    await database.execAsync('COMMIT');
+  } catch (error) {
+    await database.execAsync('ROLLBACK');
+    throw error;
+  }
+};
+
+type NormalizedDivisi = { id: string; name: string; estate_name: string; region_name: string };
+type NormalizedGang = { id: string; divisi_id: string; name: string };
+type NormalizedBlok = { id: string; divisi_id: string; name: string; tahun_tanam: number | null };
+type NormalizedPemanen = { id: string; divisi_id: string; gang_id: string | null; operator_code: string; name: string; active: number };
+type NormalizedTph = { id: string; divisi_id: string; blok_id: string; nomor_tph: string; active: number };
 
 export const syncMasterData = async () => {
+  if (masterSyncPromise) {
+    console.log('Master sync already in progress, skipping...');
+    await masterSyncPromise;
+    return;
+  }
+
   const netInfo = await NetInfo.fetch();
   if (!netInfo.isConnected) {
     console.log('Offline: Skipping master data sync');
     return;
   }
 
-  const neonClient = await getDbClient();
-
-  try {
+  masterSyncPromise = (async () => {
+    let neonClient: any = null;
+    let localDb: any = null;
+    try {
+      neonClient = await getDbClient();
+      localDb = await getLocalDb();
     console.log('Syncing master data...');
 
-    // 1. Sync Divisi
-    const { rows: divisiRows } = await neonClient.query('SELECT id, name, estate_name, rayon_id FROM divisi');
-    for (const row of divisiRows) {
-      await runCommand(
-        'INSERT OR REPLACE INTO divisi (id, name, estate_name, region_name) VALUES (?, ?, ?, ?)',
-        [row.id, row.name, row.estate_name, row.rayon_id || ''] // Using rayon_id as region_name for now
-      );
-    }
+    const { rows: divisiRows } = await queryWithFallback(neonClient, [
+      `SELECT id, name, COALESCE(estate_name, '') AS estate_name, COALESCE(rayon_id::text, '') AS region_name
+       FROM divisi
+       WHERE id IS NOT NULL AND name IS NOT NULL`,
+      `SELECT id, name, COALESCE(estate_name, '') AS estate_name, COALESCE(region_name, '') AS region_name
+       FROM divisi
+       WHERE id IS NOT NULL AND name IS NOT NULL`
+    ]);
 
-    // 2. Sync Gang
-    const { rows: gangRows } = await neonClient.query('SELECT id, divisi_id, name FROM gang');
-    for (const row of gangRows) {
-      await runCommand(
-        'INSERT OR REPLACE INTO gang (id, divisi_id, name) VALUES (?, ?, ?)',
-        [row.id, row.divisi_id, row.name]
-      );
-    }
-
-    // 3. Sync Blok
-    const { rows: blokRows } = await neonClient.query('SELECT id, divisi_id, name, tahun_tanam FROM blok');
-    for (const row of blokRows) {
-        await runCommand(
-            'INSERT OR REPLACE INTO blok (id, divisi_id, name, tahun_tanam) VALUES (?, ?, ?, ?)',
-            [row.id, row.divisi_id, row.name, row.tahun_tanam]
-        );
-    }
-
-    // 4. Sync Pemanen
-    const { rows: pemanenRows } = await neonClient.query(`
-        SELECT p.id, g.divisi_id, p.gang_id, COALESCE(p.nik, '') as operator_code, p.name, p.status_aktif as active
-        FROM pemanen p
-        JOIN gang g ON p.gang_id = g.id
+    const { rows: gangRows } = await neonClient.query(`
+      SELECT id, divisi_id, name
+      FROM gang
+      WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL
     `);
-    for (const row of pemanenRows) {
-        await runCommand(
-            'INSERT OR REPLACE INTO pemanen (id, divisi_id, gang_id, operator_code, name, active) VALUES (?, ?, ?, ?, ?, ?)',
-            [row.id, row.divisi_id, row.gang_id, row.operator_code, row.name, row.active ? 1 : 0]
-        );
-    }
 
-    // 5. Sync TPH
-    const { rows: tphRows } = await neonClient.query(`
-        SELECT t.id, b.divisi_id, t.blok_id, t.name as nomor_tph, 1 as active 
-        FROM tph t 
-        JOIN blok b ON t.blok_id = b.id
+    const { rows: blokRows } = await neonClient.query(`
+      SELECT id, divisi_id, name, tahun_tanam
+      FROM blok
+      WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL
     `);
-    for (const row of tphRows) {
-        await runCommand(
-            'INSERT OR REPLACE INTO tph (id, divisi_id, blok_id, nomor_tph, active) VALUES (?, ?, ?, ?, ?)',
-            [row.id, row.divisi_id, row.blok_id, row.nomor_tph, row.active]
-        );
-    }
 
-    // 6. Sync Estates (Optional but good for completeness)
-    try {
-        const { rows: estateRows } = await neonClient.query('SELECT id, name FROM estates');
-        await runCommand('DELETE FROM estates').catch(() => {}); // Table might not exist in local schema yet
-        // If we want to support estates locally, we'd need to add the table to schema.ts
-    } catch (e) {
-        // Ignore if estates table doesn't exist in local or server
-    }
+    const { rows: pemanenRows } = await queryWithFallback(neonClient, [
+      `SELECT p.id, g.divisi_id, p.gang_id, COALESCE(p.nik, '') AS operator_code, p.name, COALESCE(p.status_aktif, true) AS active
+       FROM pemanen p
+       JOIN gang g ON p.gang_id = g.id
+       WHERE p.id IS NOT NULL AND p.name IS NOT NULL AND g.divisi_id IS NOT NULL`,
+      `SELECT p.id, COALESCE(p.divisi_id, g.divisi_id) AS divisi_id, p.gang_id, COALESCE(p.operator_code, '') AS operator_code, p.name, COALESCE(p.active, true) AS active
+       FROM pemanen p
+       LEFT JOIN gang g ON p.gang_id = g.id
+       WHERE p.id IS NOT NULL AND p.name IS NOT NULL AND COALESCE(p.divisi_id, g.divisi_id) IS NOT NULL`
+    ]);
+
+    const { rows: tphRows } = await queryWithFallback(neonClient, [
+      `SELECT t.id, b.divisi_id, t.blok_id, t.name AS nomor_tph, 1 AS active
+       FROM tph t
+       JOIN blok b ON t.blok_id = b.id
+       WHERE t.id IS NOT NULL AND t.blok_id IS NOT NULL AND b.divisi_id IS NOT NULL AND t.name IS NOT NULL`,
+      `SELECT t.id, COALESCE(t.divisi_id, b.divisi_id) AS divisi_id, t.blok_id, t.nomor_tph, COALESCE(t.active, true) AS active
+       FROM tph t
+       LEFT JOIN blok b ON t.blok_id = b.id
+       WHERE t.id IS NOT NULL AND t.blok_id IS NOT NULL AND COALESCE(t.divisi_id, b.divisi_id) IS NOT NULL AND t.nomor_tph IS NOT NULL`
+    ]);
+
+    const normalizedDivisi: NormalizedDivisi[] = dedupeById<NormalizedDivisi>(
+      divisiRows
+        .map((row: any): NormalizedDivisi => ({
+          id: toText(row.id),
+          name: toText(row.name),
+          estate_name: toText(row.estate_name),
+          region_name: toText(row.region_name),
+        }))
+        .filter((row: NormalizedDivisi) => row.id && row.name)
+    );
+    const divisiIds = new Set(normalizedDivisi.map(row => row.id));
+
+    const normalizedGang: NormalizedGang[] = dedupeById<NormalizedGang>(
+      gangRows
+        .map((row: any): NormalizedGang => ({
+          id: toText(row.id),
+          divisi_id: toText(row.divisi_id),
+          name: toText(row.name),
+        }))
+        .filter((row: NormalizedGang) => row.id && row.divisi_id && row.name && divisiIds.has(row.divisi_id))
+    );
+    const gangIds = new Set(normalizedGang.map(row => row.id));
+
+    const normalizedBlok: NormalizedBlok[] = dedupeById<NormalizedBlok>(
+      blokRows
+        .map((row: any): NormalizedBlok => ({
+          id: toText(row.id),
+          divisi_id: toText(row.divisi_id),
+          name: toText(row.name),
+          tahun_tanam: toNullableInt(row.tahun_tanam),
+        }))
+        .filter((row: NormalizedBlok) => row.id && row.divisi_id && row.name && divisiIds.has(row.divisi_id))
+    );
+    const blokIds = new Set(normalizedBlok.map(row => row.id));
+
+    const normalizedPemanen: NormalizedPemanen[] = dedupeById<NormalizedPemanen>(
+      pemanenRows
+        .map((row: any): NormalizedPemanen => {
+          const divisiId = toText(row.divisi_id);
+          const gangId = toText(row.gang_id);
+          return {
+            id: toText(row.id),
+            divisi_id: divisiId,
+            gang_id: gangId && gangIds.has(gangId) ? gangId : null,
+            operator_code: toText(row.operator_code),
+            name: toText(row.name),
+            active: row.active ? 1 : 0,
+          };
+        })
+        .filter((row: NormalizedPemanen) => row.id && row.divisi_id && row.name && divisiIds.has(row.divisi_id))
+    );
+
+    const normalizedTph: NormalizedTph[] = dedupeById<NormalizedTph>(
+      tphRows
+        .map((row: any): NormalizedTph => ({
+          id: toText(row.id),
+          divisi_id: toText(row.divisi_id),
+          blok_id: toText(row.blok_id),
+          nomor_tph: toText(row.nomor_tph),
+          active: row.active ? 1 : 0,
+        }))
+        .filter((row: NormalizedTph) =>
+          row.id &&
+          row.divisi_id &&
+          row.blok_id &&
+          row.nomor_tph &&
+          divisiIds.has(row.divisi_id) &&
+          blokIds.has(row.blok_id)
+        )
+    );
+
+    console.log('Master sync normalized counts', {
+      divisi: normalizedDivisi.length,
+      gang: normalizedGang.length,
+      blok: normalizedBlok.length,
+      pemanen: normalizedPemanen.length,
+      tph: normalizedTph.length,
+    });
+
+    await runExclusiveWriteTransaction(localDb, async (tx: any) => {
+      await tx.execAsync('DELETE FROM tph');
+      await tx.execAsync('DELETE FROM pemanen');
+      await tx.execAsync('DELETE FROM blok');
+      await tx.execAsync('DELETE FROM gang');
+      await tx.execAsync('DELETE FROM divisi');
+
+      for (const row of normalizedDivisi) {
+        await tx.runAsync(
+          'INSERT OR REPLACE INTO divisi (id, name, estate_name, region_name) VALUES (?, ?, ?, ?)',
+          [row.id, row.name, row.estate_name, row.region_name]
+        );
+      }
+
+      for (const row of normalizedGang) {
+        await tx.runAsync(
+          'INSERT OR REPLACE INTO gang (id, divisi_id, name) VALUES (?, ?, ?)',
+          [row.id, row.divisi_id, row.name]
+        );
+      }
+
+      for (const row of normalizedBlok) {
+        await tx.runAsync(
+          'INSERT OR REPLACE INTO blok (id, divisi_id, name, tahun_tanam) VALUES (?, ?, ?, ?)',
+          [row.id, row.divisi_id, row.name, row.tahun_tanam]
+        );
+      }
+
+      for (const row of normalizedPemanen) {
+        await tx.runAsync(
+          'INSERT OR REPLACE INTO pemanen (id, divisi_id, gang_id, operator_code, name, active) VALUES (?, ?, ?, ?, ?, ?)',
+          [row.id, row.divisi_id, row.gang_id, row.operator_code, row.name, row.active]
+        );
+      }
+
+      for (const row of normalizedTph) {
+        await tx.runAsync(
+          'INSERT OR REPLACE INTO tph (id, divisi_id, blok_id, nomor_tph, active) VALUES (?, ?, ?, ?, ?)',
+          [row.id, row.divisi_id, row.blok_id, row.nomor_tph, row.active]
+        );
+      }
+
+      const [divisiCountRow, gangCountRow, blokCountRow, pemanenCountRow, tphCountRow] = await Promise.all([
+        tx.getFirstAsync('SELECT COUNT(*) as count FROM divisi'),
+        tx.getFirstAsync('SELECT COUNT(*) as count FROM gang'),
+        tx.getFirstAsync('SELECT COUNT(*) as count FROM blok'),
+        tx.getFirstAsync('SELECT COUNT(*) as count FROM pemanen'),
+        tx.getFirstAsync('SELECT COUNT(*) as count FROM tph'),
+      ]);
+
+      const localCounts = {
+        divisi: Number((divisiCountRow as any)?.count ?? 0),
+        gang: Number((gangCountRow as any)?.count ?? 0),
+        blok: Number((blokCountRow as any)?.count ?? 0),
+        pemanen: Number((pemanenCountRow as any)?.count ?? 0),
+        tph: Number((tphCountRow as any)?.count ?? 0),
+      };
+      const expectedCounts = {
+        divisi: normalizedDivisi.length,
+        gang: normalizedGang.length,
+        blok: normalizedBlok.length,
+        pemanen: normalizedPemanen.length,
+        tph: normalizedTph.length,
+      };
+
+      if (
+        localCounts.divisi !== expectedCounts.divisi ||
+        localCounts.gang !== expectedCounts.gang ||
+        localCounts.blok !== expectedCounts.blok ||
+        localCounts.pemanen !== expectedCounts.pemanen ||
+        localCounts.tph !== expectedCounts.tph
+      ) {
+        throw new Error(
+          `Master sync integrity mismatch local=${JSON.stringify(localCounts)} expected=${JSON.stringify(expectedCounts)}`
+        );
+      }
+    });
 
     console.log('Master data synced successfully');
-  } catch (error) {
-    console.error('Error syncing master data:', error);
-    throw error;
-  } finally {
-    await neonClient.end();
-  }
+    } catch (error) {
+      console.error('Error syncing master data:', error);
+      throw error;
+    } finally {
+      if (neonClient) {
+        try {
+          await neonClient.end();
+        } catch (endError) {
+          console.error('Error closing master sync db client:', endError);
+        }
+      }
+      masterSyncPromise = null;
+    }
+  })();
+
+  await masterSyncPromise;
 };
 
 export const syncHarvestQueue = async () => {
-    if (isSyncingQueue) {
+    if (queueSyncPromise) {
         console.log('Sync already in progress, skipping...');
+        await queueSyncPromise;
         return;
     }
 
@@ -109,10 +321,10 @@ export const syncHarvestQueue = async () => {
         return;
     }
 
-    isSyncingQueue = true;
-    const neonClient = await getDbClient();
-
+    queueSyncPromise = (async () => {
+    let neonClient: any = null;
     try {
+        neonClient = await getDbClient();
         for (const item of pendingItems) {
             try {
                 let photoId = null;
@@ -225,7 +437,16 @@ export const syncHarvestQueue = async () => {
     } catch (error) {
         console.error('Error during queue sync:', error);
     } finally {
-        await neonClient.end();
-        isSyncingQueue = false;
+        if (neonClient) {
+            try {
+                await neonClient.end();
+            } catch (endError) {
+                console.error('Error closing queue sync db client:', endError);
+            }
+        }
+        queueSyncPromise = null;
     }
+    })();
+
+    await queueSyncPromise;
 };

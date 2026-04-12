@@ -30,7 +30,7 @@ function RootLayoutNav() {
       const roleRoute = getRoleRoute(profile?.role);
       router.replace(roleRoute);
     }
-  }, [session, loading, segments, profile]);
+  }, [session, loading, segments, profile, router]);
 
   const getRoleRoute = (role: string | undefined) => {
     switch (role) {

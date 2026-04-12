@@ -1,0 +1,53 @@
+# Changelog
+
+## 2026-04-11
+
+### Added
+- Menambahkan dokumentasi requirement teknis aplikasi di `requirement.md`.
+- Menyusun ulang dokumentasi frontend untuk panduan arsitektur dan alur offline-first di `docs/Frontend.md`.
+- Menyusun ulang dokumentasi backend untuk panduan data flow, sinkronisasi, dan operasional di `docs/Backend.md`.
+
+### Changed
+- Memperkuat sinkronisasi master offline:
+  - menambahkan guard agar sync master tidak berjalan paralel,
+  - menambahkan transaksi SQLite agar sync master atomic,
+  - mengubah strategi refresh master lokal menjadi refresh penuh dataset untuk mencegah data parsial.
+- Memperbaiki alur refresh data dropdown di form input panen:
+  - menambahkan invalidasi cache master data setelah sync,
+  - menambahkan force refresh data divisi/gang/blok/pemanen/tph setelah sync awal, reconnect, dan periodic sync.
+- Menambahkan fallback query schema pada sinkronisasi master Neon -> SQLite untuk kompatibilitas kolom lama/baru:
+  - divisi (`rayon_id` atau `region_name`),
+  - pemanen (`nik/status_aktif` atau `operator_code/active`),
+  - tph (`name` atau `nomor_tph`).
+- Menyaring data master invalid/null-critical sebelum insert ke SQLite agar proses sync tidak gagal total akibat baris rusak.
+- Menyamakan strategi query online di hook offline-data dengan fallback schema yang sama seperti sinkronisasi master.
+- Menambahkan normalisasi data master sebelum write ke SQLite:
+  - deduplikasi per `id`,
+  - validasi relasi parent-child (`divisi -> gang/blok -> pemanen/tph`),
+  - sanitasi nilai kosong agar tidak memicu constraint error.
+- Menambahkan verifikasi integritas hasil write master data di SQLite sebelum `COMMIT`:
+  - membandingkan jumlah data lokal per tabel dengan jumlah data hasil normalisasi,
+  - membatalkan transaksi jika ada mismatch agar tidak menghasilkan snapshot lokal yang tidak sesuai.
+- Memperbaiki binding parameter SQLite agar `NULL` tetap disimpan sebagai `NULL` (tidak dipaksa menjadi string kosong).
+- Memperbaiki mekanisme lock sinkronisasi (`syncMasterData` dan `syncHarvestQueue`) agar:
+  - tidak stuck saat koneksi DB gagal sebelum proses utama,
+  - caller berikutnya menunggu proses sync aktif yang sama (shared promise) alih-alih return semu.
+- Menyetel ulang penutupan client DB agar kegagalan `end()` tidak mengunci status sinkronisasi.
+- Mengubah pengambilan data dropdown di form input panen menjadi sumber lokal SQLite yang konsisten untuk mencegah cache campuran online/offline saat jaringan tidak stabil.
+- Mengaktifkan konfigurasi runtime SQLite:
+  - `PRAGMA journal_mode=WAL`,
+  - `PRAGMA foreign_keys=ON`,
+  - `enableChangeListener` saat membuka database lokal.
+- Mengubah write transaction sinkronisasi master ke mode transaksi eksklusif (dengan fallback aman) agar operasi sinkronisasi tetap terisolasi dari query async lain.
+- Menambahkan invalidasi cache dropdown berbasis `SQLite.addDatabaseChangeListener` untuk tabel master (`divisi`, `gang`, `blok`, `pemanen`, `tph`).
+- Menambahkan shim type lokal untuk `@tencentcloud/chat-uikit-react-native` dan alias path TypeScript agar typecheck aplikasi tidak memproses deklarasi tipe bawaan package yang tidak kompatibel.
+- Menyesuaikan dependency React Hooks pada `chat.tsx`, `input-panen.tsx`, dan `app/_layout.tsx` agar inisialisasi sinkronisasi/chat lebih konsisten dan tidak memicu warning dependency kritis.
+
+### Fixed
+- Mengurangi risiko dropdown offline tampil tidak lengkap akibat:
+  - data master lokal parsial setelah sync gagal di tengah,
+  - cache dropdown yang stale setelah download/sinkron data master.
+- Mengurangi risiko perbedaan isi dropdown online vs offline saat terjadi variasi struktur kolom Neon antar environment.
+
+### Notes
+- Verifikasi command proyek berhasil dijalankan: `npm run typecheck` lulus tanpa error, `npm run lint` lulus dengan warning existing (tanpa error).
