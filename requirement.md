@@ -38,6 +38,8 @@ Aplikasi PENTOL dipakai untuk operasional panen sawit dengan kebutuhan utama:
 - Sync master tidak boleh berjalan paralel.
 - Bila sync gagal, data lama tetap konsisten dan tidak setengah ter-update.
 - Sync master harus kompatibel terhadap variasi schema Neon lintas environment (kolom legacy dan kolom terbaru) tanpa menyebabkan kegagalan total.
+- Fallback query sinkronisasi master harus mempertimbangkan kasus query berhasil tetapi hasilnya kosong (mis. join terlalu ketat), lalu mencoba query alternatif agar data master tetap lengkap.
+- Sinkronisasi master tidak boleh bergantung pada join untuk membentuk `divisi_id` pada master yang tidak menyimpan `divisi_id` (contoh: `pemanen`, `tph`); mapping harus dihitung dari relasi master lain agar dropdown tidak kosong.
 - Mapping field master online ke SQLite harus deterministik agar hasil dropdown offline sama dengan online.
 - Sebelum write ke SQLite, data master harus melalui normalisasi (deduplikasi, sanitasi nilai, validasi relasi) untuk mencegah rollback akibat data anomali.
 - Sebelum `COMMIT`, wajib ada verifikasi integritas jumlah data master per tabel di SQLite sesuai hasil normalisasi untuk menjamin kelengkapan data dropdown offline.

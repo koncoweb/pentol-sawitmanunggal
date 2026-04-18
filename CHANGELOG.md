@@ -49,6 +49,8 @@
 - Menambahkan retry bertahap pada transaksi write master saat SQLite melaporkan `database is locked`.
 - Menunda refresh dropdown berbasis listener selama fase bootstrap sinkronisasi awal di form input panen untuk mengurangi konflik baca/tulis SQLite.
 - Menambahkan guard koneksi internet pada halaman chat agar inisialisasi TUIKit/Chat engine tidak dijalankan saat offline, sehingga tidak memunculkan error UserSig.
+- Menambahkan fallback query master data yang mempertimbangkan hasil kosong (bukan hanya error) untuk tabel `blok`, `pemanen`, dan `tph` agar sinkronisasi tetap kompatibel saat variasi schema/relasi menyebabkan query join menghasilkan 0 row.
+- Menyesuaikan pengambilan master data `pemanen` dan `tph` agar tidak bergantung pada join untuk memperoleh `divisi_id`; pemetaan `divisi_id` dihitung dari relasi lokal (`pemanen.gang_id -> gang.divisi_id`, `tph.blok_id -> blok.divisi_id`) untuk mencegah dropdown kosong saat data relasi parsial.
 - Menyesuaikan konfigurasi `app.json` agar lolos validasi schema Expo:
   - menghapus `android.minSdkVersion` (mengandalkan `expo-build-properties`),
   - mengganti `icon`, `android.adaptiveIcon.foregroundImage`, dan `splash.image` ke asset PNG.
@@ -66,6 +68,7 @@
 - Memperbaiki kegagalan sinkronisasi master/queue (`Database connection string is missing` / `Database configuration error`) di Expo Go dengan fallback konfigurasi runtime database.
 - Mengurangi error startup form input panen terkait `NativeDatabase.execAsync ... database is locked` saat sync master berjalan bersamaan dengan pembacaan data dropdown.
 - Mengurangi error saat membuka halaman chat di kondisi offline dengan membatalkan proses inisialisasi chat dan menampilkan notifikasi offline.
+- Memperbaiki stabilitas ambil/upload foto di Android build dengan menyimpan foto offline lewat penulisan base64 ke storage aplikasi dan memastikan permission galeri diminta sebelum membuka image picker.
 
 ### Notes
 - Verifikasi command proyek berhasil dijalankan: `npm run typecheck` lulus tanpa error, `npm run lint` lulus dengan warning existing (tanpa error).

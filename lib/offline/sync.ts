@@ -2,18 +2,27 @@ import { getDbClient, hasDatabaseConfig } from '../db';
 import { getLocalDb, runCommand, runQuery } from './db';
 import { HarvestRecordQueueItem } from './types';
 import NetInfo from '@react-native-community/netinfo';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 
 let masterSyncPromise: Promise<void> | null = null;
 let queueSyncPromise: Promise<void> | null = null;
 let hasLoggedMissingDbConfigForMaster = false;
 let hasLoggedMissingDbConfigForQueue = false;
 
-const queryWithFallback = async (client: any, queries: string[]) => {
+const queryWithFallback = async (
+  client: any,
+  queries: string[],
+  options?: { requireNonEmpty?: boolean }
+) => {
   let lastError: any;
   for (const query of queries) {
     try {
-      return await client.query(query);
+      const result = await client.query(query);
+      if (options?.requireNonEmpty && Array.isArray(result?.rows) && result.rows.length === 0) {
+        lastError = new Error('Empty result');
+        continue;
+      }
+      return result;
     } catch (error) {
       lastError = error;
     }
@@ -113,7 +122,7 @@ export const syncMasterData = async () => {
     try {
       neonClient = await getDbClient();
       localDb = await getLocalDb();
-    console.log('Syncing master data...');
+      console.log('Syncing master data...');
 
     const { rows: divisiRows } = await queryWithFallback(neonClient, [
       `SELECT id, name, COALESCE(estate_name, '') AS estate_name, COALESCE(rayon_id::text, '') AS region_name
@@ -124,39 +133,38 @@ export const syncMasterData = async () => {
        WHERE id IS NOT NULL AND name IS NOT NULL`
     ]);
 
-    const { rows: gangRows } = await neonClient.query(`
-      SELECT id, divisi_id, name
-      FROM gang
-      WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL
+    const { rows: gangRows } = await queryWithFallback(neonClient, [
+      `SELECT id, divisi_id, name
+       FROM gang
+       WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL`,
+      `SELECT id, COALESCE(divisi_id, division_id) AS divisi_id, name
+       FROM gang
+       WHERE id IS NOT NULL AND COALESCE(divisi_id, division_id) IS NOT NULL AND name IS NOT NULL`
+    ], { requireNonEmpty: true });
+
+    const { rows: blokRows } = await queryWithFallback(neonClient, [
+      `SELECT id, divisi_id, name, tahun_tanam
+       FROM blok
+       WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL`,
+      `SELECT id, COALESCE(divisi_id, division_id) AS divisi_id, name, tahun_tanam
+       FROM blok
+       WHERE id IS NOT NULL AND COALESCE(divisi_id, division_id) IS NOT NULL AND name IS NOT NULL`,
+      `SELECT id, COALESCE(divisi_id, division_id) AS divisi_id, COALESCE(blok_name, nama_blok, block_name, name) AS name, tahun_tanam
+       FROM blok
+       WHERE id IS NOT NULL AND COALESCE(divisi_id, division_id) IS NOT NULL AND COALESCE(blok_name, nama_blok, block_name, name) IS NOT NULL`
+    ], { requireNonEmpty: true });
+
+    const { rows: pemanenRows } = await neonClient.query(`
+      SELECT id, gang_id, COALESCE(nik, '') AS operator_code, name, COALESCE(status_aktif, true) AS active
+      FROM pemanen
+      WHERE id IS NOT NULL AND name IS NOT NULL
     `);
 
-    const { rows: blokRows } = await neonClient.query(`
-      SELECT id, divisi_id, name, tahun_tanam
-      FROM blok
-      WHERE id IS NOT NULL AND divisi_id IS NOT NULL AND name IS NOT NULL
+    const { rows: tphRows } = await neonClient.query(`
+      SELECT id, blok_id, name AS nomor_tph, 1 AS active
+      FROM tph
+      WHERE id IS NOT NULL AND blok_id IS NOT NULL AND name IS NOT NULL
     `);
-
-    const { rows: pemanenRows } = await queryWithFallback(neonClient, [
-      `SELECT p.id, g.divisi_id, p.gang_id, COALESCE(p.nik, '') AS operator_code, p.name, COALESCE(p.status_aktif, true) AS active
-       FROM pemanen p
-       JOIN gang g ON p.gang_id = g.id
-       WHERE p.id IS NOT NULL AND p.name IS NOT NULL AND g.divisi_id IS NOT NULL`,
-      `SELECT p.id, COALESCE(p.divisi_id, g.divisi_id) AS divisi_id, p.gang_id, COALESCE(p.operator_code, '') AS operator_code, p.name, COALESCE(p.active, true) AS active
-       FROM pemanen p
-       LEFT JOIN gang g ON p.gang_id = g.id
-       WHERE p.id IS NOT NULL AND p.name IS NOT NULL AND COALESCE(p.divisi_id, g.divisi_id) IS NOT NULL`
-    ]);
-
-    const { rows: tphRows } = await queryWithFallback(neonClient, [
-      `SELECT t.id, b.divisi_id, t.blok_id, t.name AS nomor_tph, 1 AS active
-       FROM tph t
-       JOIN blok b ON t.blok_id = b.id
-       WHERE t.id IS NOT NULL AND t.blok_id IS NOT NULL AND b.divisi_id IS NOT NULL AND t.name IS NOT NULL`,
-      `SELECT t.id, COALESCE(t.divisi_id, b.divisi_id) AS divisi_id, t.blok_id, t.nomor_tph, COALESCE(t.active, true) AS active
-       FROM tph t
-       LEFT JOIN blok b ON t.blok_id = b.id
-       WHERE t.id IS NOT NULL AND t.blok_id IS NOT NULL AND COALESCE(t.divisi_id, b.divisi_id) IS NOT NULL AND t.nomor_tph IS NOT NULL`
-    ]);
 
     const normalizedDivisi: NormalizedDivisi[] = dedupeById<NormalizedDivisi>(
       divisiRows
@@ -180,6 +188,7 @@ export const syncMasterData = async () => {
         .filter((row: NormalizedGang) => row.id && row.divisi_id && row.name && divisiIds.has(row.divisi_id))
     );
     const gangIds = new Set(normalizedGang.map(row => row.id));
+    const gangById = new Map(normalizedGang.map(row => [row.id, row] as const));
 
     const normalizedBlok: NormalizedBlok[] = dedupeById<NormalizedBlok>(
       blokRows
@@ -192,12 +201,15 @@ export const syncMasterData = async () => {
         .filter((row: NormalizedBlok) => row.id && row.divisi_id && row.name && divisiIds.has(row.divisi_id))
     );
     const blokIds = new Set(normalizedBlok.map(row => row.id));
+    const blokById = new Map(normalizedBlok.map(row => [row.id, row] as const));
 
     const normalizedPemanen: NormalizedPemanen[] = dedupeById<NormalizedPemanen>(
       pemanenRows
         .map((row: any): NormalizedPemanen => {
-          const divisiId = toText(row.divisi_id);
           const gangId = toText(row.gang_id);
+          const divisiId =
+            toText(row.divisi_id) ||
+            (gangId ? toText(gangById.get(gangId)?.divisi_id) : '');
           return {
             id: toText(row.id),
             divisi_id: divisiId,
@@ -212,13 +224,17 @@ export const syncMasterData = async () => {
 
     const normalizedTph: NormalizedTph[] = dedupeById<NormalizedTph>(
       tphRows
-        .map((row: any): NormalizedTph => ({
-          id: toText(row.id),
-          divisi_id: toText(row.divisi_id),
-          blok_id: toText(row.blok_id),
-          nomor_tph: toText(row.nomor_tph),
-          active: row.active ? 1 : 0,
-        }))
+        .map((row: any): NormalizedTph => {
+          const blokId = toText(row.blok_id);
+          const divisiId = toText(row.divisi_id) || (blokId ? toText(blokById.get(blokId)?.divisi_id) : '');
+          return {
+            id: toText(row.id),
+            divisi_id: divisiId,
+            blok_id: blokId,
+            nomor_tph: toText(row.nomor_tph),
+            active: row.active ? 1 : 0,
+          };
+        })
         .filter((row: NormalizedTph) =>
           row.id &&
           row.divisi_id &&
@@ -378,7 +394,7 @@ export const syncHarvestQueue = async () => {
                         const fileInfo = await FileSystem.getInfoAsync(item.foto_path);
                         if (fileInfo.exists) {
                             const base64 = await FileSystem.readAsStringAsync(item.foto_path, {
-                                encoding: FileSystem.EncodingType.Base64,
+                                encoding: 'base64',
                             });
                             
                             const { rows } = await neonClient.query(`

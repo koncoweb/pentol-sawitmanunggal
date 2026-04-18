@@ -18,7 +18,7 @@ import { getDbClient } from '@/lib/db';
 import { useOfflineData, runCommand, runQuery, syncHarvestQueue, syncMasterData } from '@/lib/offline';
 import { ChevronLeft, Save, X, Check, Calendar, Image as ImageIcon, WifiOff } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import NetInfo from '@react-native-community/netinfo';
 import * as SQLite from 'expo-sqlite';
 
@@ -360,10 +360,16 @@ export default function InputPanenScreen() {
             }
             
             const destPath = harvestDir + filename;
-            await FileSystem.copyAsync({
-                from: photoUri,
-                to: destPath
-            });
+            if (photoBase64) {
+                await FileSystem.writeAsStringAsync(destPath, photoBase64, {
+                    encoding: 'base64'
+                });
+            } else {
+                await FileSystem.copyAsync({
+                    from: photoUri,
+                    to: destPath
+                });
+            }
             
             localPhotoPath = destPath;
             console.log('Photo saved to local storage:', localPhotoPath);
@@ -561,6 +567,12 @@ export default function InputPanenScreen() {
 
   const handleLaunchLibrary = async () => {
     try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert(t('common.error'), t('input.error.pickImage'));
+        return;
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
