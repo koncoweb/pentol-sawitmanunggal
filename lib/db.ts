@@ -1,10 +1,17 @@
 import { Client } from '@neondatabase/serverless';
+import Constants from 'expo-constants';
 
-const connectionString = process.env.EXPO_PUBLIC_NEON_DATABASE_URL!;
+const resolveDatabaseUrl = () => {
+  const databaseUrlFromExtra = (Constants.expoConfig?.extra as { neonDatabaseUrl?: string } | undefined)?.neonDatabaseUrl;
+  return process.env.EXPO_PUBLIC_NEON_DATABASE_URL || databaseUrlFromExtra || '';
+};
+
+export const hasDatabaseConfig = () => Boolean(resolveDatabaseUrl());
 
 export const getDbClient = async () => {
+  const connectionString = resolveDatabaseUrl();
   if (!connectionString) {
-    console.error('Database connection string is missing');
+    console.warn('Database connection string is missing');
     throw new Error('Database configuration error');
   }
 

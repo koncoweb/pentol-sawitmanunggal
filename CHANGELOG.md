@@ -42,12 +42,30 @@
 - Menambahkan invalidasi cache dropdown berbasis `SQLite.addDatabaseChangeListener` untuk tabel master (`divisi`, `gang`, `blok`, `pemanen`, `tph`).
 - Menambahkan shim type lokal untuk `@tencentcloud/chat-uikit-react-native` dan alias path TypeScript agar typecheck aplikasi tidak memproses deklarasi tipe bawaan package yang tidak kompatibel.
 - Menyesuaikan dependency React Hooks pada `chat.tsx`, `input-panen.tsx`, dan `app/_layout.tsx` agar inisialisasi sinkronisasi/chat lebih konsisten dan tidak memicu warning dependency kritis.
+- Menyesuaikan konfigurasi auth client mobile agar endpoint Better Auth tidak fallback ke `localhost` di Expo Go, dengan fallback URL runtime yang kompatibel device.
+- Menambahkan konfigurasi `expo.extra.neonAuthUrl` pada `app.json` agar URL auth tetap tersedia saat env lokal belum dimuat.
+- Menyesuaikan konfigurasi database client mobile agar endpoint Neon database untuk sinkronisasi tidak gagal di Expo Go saat env runtime tidak termuat.
+- Menambahkan guard sinkronisasi master/queue untuk melakukan graceful skip saat konfigurasi database Neon belum tersedia di runtime, sehingga tidak memicu error berulang di layar input panen.
+- Menambahkan retry bertahap pada transaksi write master saat SQLite melaporkan `database is locked`.
+- Menunda refresh dropdown berbasis listener selama fase bootstrap sinkronisasi awal di form input panen untuk mengurangi konflik baca/tulis SQLite.
+- Menambahkan guard koneksi internet pada halaman chat agar inisialisasi TUIKit/Chat engine tidak dijalankan saat offline, sehingga tidak memunculkan error UserSig.
+- Menyesuaikan konfigurasi `app.json` agar lolos validasi schema Expo:
+  - menghapus `android.minSdkVersion` (mengandalkan `expo-build-properties`),
+  - mengganti `icon`, `android.adaptiveIcon.foregroundImage`, dan `splash.image` ke asset PNG.
+- Menyelaraskan dependency dengan versi yang diharapkan oleh Expo SDK:
+  - menurunkan `react-native-worklets` ke versi yang kompatibel,
+  - menghapus `@types/react-native` (tipe sudah dibundel oleh `react-native`).
 
 ### Fixed
 - Mengurangi risiko dropdown offline tampil tidak lengkap akibat:
   - data master lokal parsial setelah sync gagal di tengah,
   - cache dropdown yang stale setelah download/sinkron data master.
 - Mengurangi risiko perbedaan isi dropdown online vs offline saat terjadi variasi struktur kolom Neon antar environment.
+- Memperbaiki kegagalan login `network error` di Expo Go akibat fallback endpoint auth yang tidak bisa diakses dari perangkat fisik.
+- Memperbaiki kegagalan sinkronisasi master/queue (`Database connection string is missing` / `Database configuration error`) di Expo Go dengan fallback konfigurasi runtime database.
+- Mengurangi error startup form input panen terkait `NativeDatabase.execAsync ... database is locked` saat sync master berjalan bersamaan dengan pembacaan data dropdown.
+- Mengurangi error saat membuka halaman chat di kondisi offline dengan membatalkan proses inisialisasi chat dan menampilkan notifikasi offline.
 
 ### Notes
 - Verifikasi command proyek berhasil dijalankan: `npm run typecheck` lulus tanpa error, `npm run lint` lulus dengan warning existing (tanpa error).
+- `npx expo-doctor` lulus tanpa temuan.

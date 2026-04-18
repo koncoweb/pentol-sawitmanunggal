@@ -1,4 +1,4 @@
-import { getDbClient } from '../db';
+import { getDbClient, hasDatabaseConfig } from '../db';
 import { getLocalDb, runCommand, runQuery } from './db';
 import { HarvestRecordQueueItem } from './types';
 import NetInfo from '@react-native-community/netinfo';
@@ -6,6 +6,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 let masterSyncPromise: Promise<void> | null = null;
 let queueSyncPromise: Promise<void> | null = null;
+let hasLoggedMissingDbConfigForMaster = false;
+let hasLoggedMissingDbConfigForQueue = false;
 
 const queryWithFallback = async (client: any, queries: string[]) => {
   let lastError: any;
@@ -54,6 +56,30 @@ const runExclusiveWriteTransaction = async (database: any, task: (tx: any) => Pr
   }
 };
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const isDatabaseLockedError = (error: any) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('database is locked') || message.includes('nativedatabase.execasync has been rejected');
+};
+
+const runMasterWriteTransactionWithRetry = async (database: any, task: (tx: any) => Promise<void>) => {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await runExclusiveWriteTransaction(database, task);
+      return;
+    } catch (error) {
+      if (!isDatabaseLockedError(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      const backoffMs = attempt * 250;
+      console.warn(`SQLite busy during master sync (attempt ${attempt}/${maxAttempts}), retrying in ${backoffMs}ms...`);
+      await sleep(backoffMs);
+    }
+  }
+};
+
 type NormalizedDivisi = { id: string; name: string; estate_name: string; region_name: string };
 type NormalizedGang = { id: string; divisi_id: string; name: string };
 type NormalizedBlok = { id: string; divisi_id: string; name: string; tahun_tanam: number | null };
@@ -70,6 +96,14 @@ export const syncMasterData = async () => {
   const netInfo = await NetInfo.fetch();
   if (!netInfo.isConnected) {
     console.log('Offline: Skipping master data sync');
+    return;
+  }
+
+  if (!hasDatabaseConfig()) {
+    if (!hasLoggedMissingDbConfigForMaster) {
+      console.warn('Online master sync dilewati karena konfigurasi database Neon belum tersedia di runtime.');
+      hasLoggedMissingDbConfigForMaster = true;
+    }
     return;
   }
 
@@ -203,7 +237,7 @@ export const syncMasterData = async () => {
       tph: normalizedTph.length,
     });
 
-    await runExclusiveWriteTransaction(localDb, async (tx: any) => {
+    await runMasterWriteTransactionWithRetry(localDb, async (tx: any) => {
       await tx.execAsync('DELETE FROM tph');
       await tx.execAsync('DELETE FROM pemanen');
       await tx.execAsync('DELETE FROM blok');
@@ -310,6 +344,14 @@ export const syncHarvestQueue = async () => {
     const netInfo = await NetInfo.fetch();
     if (!netInfo.isConnected) {
         console.log('Offline: Skipping harvest queue sync');
+        return;
+    }
+
+    if (!hasDatabaseConfig()) {
+        if (!hasLoggedMissingDbConfigForQueue) {
+            console.warn('Online queue sync dilewati karena konfigurasi database Neon belum tersedia di runtime.');
+            hasLoggedMissingDbConfigForQueue = true;
+        }
         return;
     }
 

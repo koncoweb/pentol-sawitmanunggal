@@ -4,9 +4,9 @@
     "slug": "pentol-harvest-management",
     "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/images/lg-aep-cmyk-300dpi.jpg",
+    "icon": "./assets/images/icon.png",
     "splash": {
-      "image": "./assets/images/lg-aep-cmyk-300dpi copy.jpg",
+      "image": "./assets/images/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -18,9 +18,8 @@
     },
     "android": {
       "package": "com.sawitmanunggal.pentol",
-      "minSdkVersion": 24,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/lg-aep-cmyk-300dpi.jpg",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
@@ -114,6 +113,7 @@
     },
     "extra": {
       "router": {},
+      "neonAuthUrl": "https://ep-morning-shadow-a1p4v4nw.neonauth.ap-southeast-1.aws.neon.tech/neondb/auth",
       "eas": {
         "projectId": "b448cbfd-2de7-4c68-82ea-e90541c5db44"
       }

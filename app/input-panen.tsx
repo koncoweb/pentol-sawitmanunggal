@@ -98,6 +98,7 @@ export default function InputPanenScreen() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [isMasterBootstrapping, setIsMasterBootstrapping] = useState(true);
   const activeDivisiRef = useRef<string>('');
   const masterCacheRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formData, setFormData] = useState({
@@ -220,9 +221,15 @@ export default function InputPanenScreen() {
       try {
         await syncMasterData();
         console.log('Initial master data sync complete');
-        await refreshMasterDataForForm();
       } catch (err) {
         console.error('Initial sync master failed:', err);
+      } finally {
+        try {
+          await refreshMasterDataForForm();
+        } catch (refreshError) {
+          console.error('Initial refresh master data failed:', refreshError);
+        }
+        setIsMasterBootstrapping(false);
       }
       
       try {
@@ -285,6 +292,7 @@ export default function InputPanenScreen() {
 
   useEffect(() => {
     const subscription = SQLite.addDatabaseChangeListener((event: any) => {
+      if (isMasterBootstrapping) return;
       if (event?.databaseName !== 'offline.db') return;
       if (!['divisi', 'gang', 'blok', 'pemanen', 'tph'].includes(event?.tableName)) return;
 
@@ -306,9 +314,10 @@ export default function InputPanenScreen() {
       }
       subscription.remove();
     };
-  }, [refreshMasterDataForForm]);
+  }, [isMasterBootstrapping, refreshMasterDataForForm]);
 
   useEffect(() => {
+    if (isMasterBootstrapping) return;
     console.log('InputPanenScreen mounted v2 (Neon DB Upload Active)', profile);
     loadDivisiList();
 
@@ -324,14 +333,15 @@ export default function InputPanenScreen() {
       }
       loadDivisiData(divisiId);
     }
-  }, [profile, loadDivisiData, loadDivisiList, formData.divisi_id]);
+  }, [isMasterBootstrapping, profile, loadDivisiData, loadDivisiList, formData.divisi_id]);
 
   useEffect(() => {
+    if (isMasterBootstrapping) return;
     // Load data ketika divisi berubah
     if (formData.divisi_id && formData.divisi_id !== profile?.divisi_id) {
       loadDivisiData(formData.divisi_id);
     }
-  }, [formData.divisi_id, loadDivisiData, profile?.divisi_id]);
+  }, [isMasterBootstrapping, formData.divisi_id, loadDivisiData, profile?.divisi_id]);
 
   const saveToOfflineQueue = async (finalBlokIds: string[], userId: string) => {
     const jjg = parseFloat(formData.hasil_panen_bjd) || 0;

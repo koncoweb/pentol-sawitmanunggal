@@ -22,6 +22,7 @@ export default function ChatScreen() {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [chatReady, setChatReady] = useState(false);
+  const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [currentView, setCurrentView] = useState<'conversation' | 'chat' | 'setting'>('conversation');
   const [userDirectory, setUserDirectory] = useState<{ id: string; full_name: string | null; role: string; photo_url: string | null }[]>([]);
   const [userDirectoryLoading, setUserDirectoryLoading] = useState(false);
@@ -31,6 +32,41 @@ export default function ChatScreen() {
   const [webInput, setWebInput] = useState('');
   const webScrollRef = useRef<any>(null);
   const [incomingNotification, setIncomingNotification] = useState<{ fromId: string; fromName: string | null; text: string } | null>(null);
+  const offlineNoticeShownRef = useRef(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const syncState = (state: any) => {
+      if (!isMounted) return;
+      const connected = Boolean(state?.isConnected);
+      setIsConnected(connected);
+      if (!connected) {
+        setLoading(false);
+        setChatReady(false);
+        setWebChat(null);
+        setWebSelectedUserId(null);
+        setWebMessages([]);
+        if (!offlineNoticeShownRef.current) {
+          offlineNoticeShownRef.current = true;
+          Alert.alert(
+            t('chat.offline_title', 'Anda sedang offline'),
+            t('chat.offline_message', 'Silahkan chat saat koneksi internet tersambung kembali'),
+          );
+        }
+      }
+    };
+
+    NetInfo.fetch().then(syncState).catch(() => {
+      syncState({ isConnected: false });
+    });
+
+    const unsubscribe = NetInfo.addEventListener(syncState);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [t]);
 
   useEffect(() => {
     if (!webChat) return;
@@ -145,6 +181,12 @@ export default function ChatScreen() {
 
   const initChatWeb = useCallback(async (userId: string) => {
     try {
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected) {
+        setChatReady(false);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setChatReady(false);
 
@@ -280,6 +322,12 @@ export default function ChatScreen() {
 
   const initChat = useCallback(async (userId: string) => {
     try {
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected) {
+        setChatReady(false);
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setChatReady(false);
 
@@ -360,6 +408,15 @@ export default function ChatScreen() {
   }, [profile?.full_name, t, user?.email]);
 
   useEffect(() => {
+    if (!user?.id) {
+      return;
+    }
+    if (isConnected === false) {
+      return;
+    }
+    if (isConnected === null) {
+      return;
+    }
     if (user?.id) {
       if (Platform.OS === 'web') {
         initChatWeb(user.id);
@@ -368,13 +425,36 @@ export default function ChatScreen() {
       }
       loadUserDirectory(user.id);
     }
-  }, [initChat, initChatWeb, loadUserDirectory, user?.id]);
+  }, [initChat, initChatWeb, isConnected, loadUserDirectory, user?.id]);
 
   if (!user) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
           <Text>{t('auth.please_login', 'Silakan login untuk menggunakan chat.')}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isConnected === false) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <Text style={styles.loadingText}>
+            {t('chat.offline_message', 'Silahkan chat saat koneksi internet tersambung kembali')}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isConnected === null) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#2d5016" />
+          <Text style={styles.loadingText}>{t('common.checking_connection', 'Memeriksa koneksi...')}</Text>
         </View>
       </SafeAreaView>
     );

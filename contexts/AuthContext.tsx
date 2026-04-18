@@ -95,10 +95,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await authClient.signIn.email({
-      email,
-      password,
-    });
+    let data: any;
+    let error: any;
+    try {
+      const result = await authClient.signIn.email({
+        email,
+        password,
+      });
+      data = result.data;
+      error = result.error;
+    } catch (requestError: any) {
+      const message = String(requestError?.message || '').toLowerCase();
+      if (message.includes('network request failed') || message.includes('failed to fetch')) {
+        throw new Error('Login gagal: aplikasi tidak dapat terhubung ke server autentikasi.');
+      }
+      throw requestError;
+    }
     
     if (error) {
       throw error;

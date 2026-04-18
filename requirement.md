@@ -14,6 +14,13 @@ Aplikasi PENTOL dipakai untuk operasional panen sawit dengan kebutuhan utama:
 - User login menggunakan Better Auth.
 - Session user harus menentukan route dan menu sesuai role.
 - Role minimal: `krani_panen`, `krani_buah`, `mandor`, `asisten`, `estate_manager`, `regional_gm`, `administrator`.
+- Konfigurasi endpoint auth harus valid pada runtime mobile Expo Go; aplikasi tidak boleh fallback ke `localhost` karena akan memicu gagal login di perangkat fisik.
+- Konfigurasi endpoint database Neon untuk sinkronisasi master/queue harus valid pada runtime mobile Expo Go agar proses sync tidak gagal dengan `Database configuration error`.
+- Saat konfigurasi database Neon belum tersedia di runtime, proses sync online harus dilewati secara aman (graceful skip) tanpa memunculkan error fatal ke user.
+
+### 1b. Chat
+- Fitur chat hanya boleh melakukan inisialisasi engine dan koneksi server saat perangkat memiliki koneksi internet.
+- Jika halaman chat dibuka saat offline, proses inisialisasi chat harus dibatalkan dan user diberi notifikasi bahwa chat hanya bisa digunakan saat koneksi internet tersambung kembali.
 
 ### 2. Input Panen (Offline-First)
 - Form input panen tetap bisa dipakai saat offline.
@@ -38,6 +45,8 @@ Aplikasi PENTOL dipakai untuk operasional panen sawit dengan kebutuhan utama:
 - Semua trigger sinkronisasi harus menunggu proses sync aktif yang sama (`shared promise`) agar tidak terjadi false-success pada caller lain.
 - Runtime SQLite wajib mengaktifkan `PRAGMA journal_mode=WAL` dan `PRAGMA foreign_keys=ON`.
 - Operasi write massal master data harus memakai transaksi eksklusif (atau fallback transaksi manual yang setara) agar query lain tidak menyusup ke transaksi aktif.
+- Saat SQLite mengembalikan kondisi `database is locked`, sinkronisasi master harus melakukan retry terukur (backoff) agar konflik sementara tidak langsung dianggap gagal permanen.
+- Saat bootstrap sinkronisasi form input panen berjalan, pembacaan ulang cache dropdown harus ditunda agar tidak bentrok dengan transaksi write master.
 
 ### 5. Sinkronisasi Queue Panen
 - Item antrean status `pending/error` harus dicoba sinkron ulang saat online.
@@ -53,6 +62,7 @@ Aplikasi PENTOL dipakai untuk operasional panen sawit dengan kebutuhan utama:
 ### Keandalan
 - Operasi sinkronisasi harus idempotent dan tahan retry.
 - Perubahan koneksi jaringan tidak boleh menyebabkan crash.
+- Kegagalan jaringan saat login harus menghasilkan pesan error yang jelas dan dapat ditindaklanjuti user.
 
 ### Performa
 - Query master data harus efisien untuk dipakai di perangkat mobile.
@@ -65,6 +75,7 @@ Aplikasi PENTOL dipakai untuk operasional panen sawit dengan kebutuhan utama:
 ### Maintainability
 - Semua perubahan perilaku aplikasi harus diikuti update dokumentasi.
 - Struktur kode mengikuti modul: route, service/db, offline sync, reusable component.
+- Sebelum proses build/release, proyek harus lolos pemeriksaan `expo-doctor` untuk memastikan config dan dependency sesuai dengan Expo SDK.
 - Query master online dan query sinkronisasi master wajib dijaga tetap sejalan agar hasil data dropdown identik antara mode online dan offline.
 - Data dropdown form input panen harus dibaca dari sumber lokal yang konsisten setelah sync untuk menghindari cache campuran saat jaringan fluktuatif.
 - Cache dropdown wajib memiliki invalidasi berbasis perubahan SQLite (database change listener) agar UI tidak menampilkan data stale setelah sinkronisasi.
