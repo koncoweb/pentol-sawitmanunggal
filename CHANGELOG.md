@@ -55,6 +55,7 @@
 - Menyelaraskan dependency dengan versi yang diharapkan oleh Expo SDK:
   - menurunkan `react-native-worklets` ke versi yang kompatibel,
   - menghapus `@types/react-native` (tipe sudah dibundel oleh `react-native`).
+- Menyesuaikan Android `compileSdkVersion` dan `targetSdkVersion` ke 35 untuk memenuhi requirement dependency AndroidX terbaru saat build release/preview.
 
 ### Fixed
 - Mengurangi risiko dropdown offline tampil tidak lengkap akibat:
