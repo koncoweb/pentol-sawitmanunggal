@@ -3,10 +3,11 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Database, Download, CheckCircle2, AlertCircle } from 'lucide-react-native';
 import NetInfo from '@react-native-community/netinfo';
-import { runQuery, syncMasterData } from '@/lib/offline';
+import { runQuery, syncMasterData, useOfflineData } from '@/lib/offline';
 
 export default function SyncMasterScreen() {
   const router = useRouter();
+  const { clearCache } = useOfflineData();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
   const [counts, setCounts] = useState({
@@ -54,8 +55,10 @@ export default function SyncMasterScreen() {
     setIsSyncing(true);
     try {
       await syncMasterData();
+      // Clear cache after successful sync to ensure fresh data
+      clearCache();
       await loadCounts();
-      Alert.alert('Sukses', 'Data master berhasil disinkronisasi dan disimpan ke penyimpanan lokal.');
+      Alert.alert('Sukses', 'Data master berhasil disinkronisasi dan cache telah dibersihkan.');
     } catch (error: any) {
       console.error('Sync error:', error);
       Alert.alert('Error', `Gagal melakukan sinkronisasi: ${error.message}`);

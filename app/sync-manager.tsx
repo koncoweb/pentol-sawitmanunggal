@@ -23,7 +23,7 @@ import {
   Database
 } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
-import { runQuery, runCommand, syncHarvestQueue, syncMasterData } from '@/lib/offline';
+import { runQuery, runCommand, syncHarvestQueue, syncMasterData, useOfflineData } from '@/lib/offline';
 import { HarvestRecordQueueItem } from '@/lib/offline/types';
 import NetInfo from '@react-native-community/netinfo';
 
@@ -31,6 +31,7 @@ export default function SyncManagerScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
+  const { clearCache, getCacheInfo } = useOfflineData();
   const [pendingItems, setPendingItems] = useState<HarvestRecordQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -92,8 +93,10 @@ export default function SyncManagerScreen() {
     try {
       await syncHarvestQueue();
       await syncMasterData();
+      // Clear cache after successful sync to ensure fresh data
+      clearCache();
       await loadPendingItems();
-      Alert.alert('Sukses', 'Sinkronisasi selesai');
+      Alert.alert('Sukses', 'Sinkronisasi selesai. Cache telah dibersihkan.');
     } catch (error: any) {
       console.error('Sync failed:', error);
       Alert.alert('Error', `Sinkronisasi gagal: ${error.message}`);

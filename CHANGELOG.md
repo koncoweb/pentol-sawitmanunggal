@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-21
+
+### Fixed
+- Memperbaiki `performInitialSync` yang berjalan ulang setiap kali status koneksi berubah:
+  - `isOffline` dihapus dari dependency `useCallback` pada `refreshMasterDataForForm` dan diganti dengan `isOfflineRef` (ref yang selalu terupdate) agar callback tidak dibuat ulang saat koneksi berubah.
+  - `useEffect` sinkronisasi tidak lagi re-run dan tidak lagi memanggil `performInitialSync` berulang kali akibat perubahan konektivitas.
+- Memperbaiki debounce timer reconnect yang selalu dibatalkan sebelum sempat berjalan:
+  - Akar masalah sama dengan di atas: `useEffect([refreshMasterDataForForm])` menjalankan cleanup yang membatalkan `reconnectDebounceTimer` tepat saat timer baru saja diset oleh callback NetInfo, karena kedua event (state `isOffline` berubah dan timer di-set) terjadi bersamaan.
+  - Dengan `isOfflineRef`, `refreshMasterDataForForm` tidak lagi berubah saat koneksi pulih sehingga cleanup tidak lagi membatalkan timer reconnect.
+- Memperbaiki `forceOffline: true` yang melewati in-memory cache secara tidak sengaja:
+  - Cache in-memory di `hooks.ts` sekarang selalu dicek terlebih dahulu, tidak peduli nilai `forceOffline`.
+  - `forceOffline` hanya menentukan apakah query ke Neon DB boleh dilakukan, bukan apakah cache boleh dibaca.
+  - Mencegah pembacaan SQLite yang tidak perlu saat data segar sudah tersedia di cache.
+- Memperbaiki timer leak pada `queryWithTimeout`:
+  - `setTimeout` di dalam `timeoutPromise` sekarang selalu dibersihkan via `.finally(() => clearTimeout(timerId))` saat query berhasil sebelum timeout.
+  - Mencegah akumulasi timer menggantung pada setiap siklus pemuatan data (hingga 8 timer per load divisi).
+- Menambahkan `clearCache()` di semua jalur post-sync pada `input-panen.tsx`:
+  - Setelah `syncMasterData()` di `performInitialSync` (background sync awal).
+  - Setelah `syncMasterData()` di reconnect debounce handler.
+  - Di dalam `SQLite.addDatabaseChangeListener` callback sebelum `refreshMasterDataForForm()`.
+  - Memastikan cache Neon DB di-invalidasi setelah setiap sync agar UI membaca data terbaru, sesuai requirement "data dropdown harus di-refresh dari sumber terbaru setelah sync sukses".
+- Memperbaiki fallback query `getPemanen` dan `getTPH` di `hooks.ts` yang mereferensikan kolom tidak valid di skema NeonDB saat ini:
+  - `getPemanen` fallback: mengganti `p.divisi_id`, `p.operator_code`, `p.active` (tidak ada di NeonDB) dengan `p.nik`, `p.status_aktif`, `g.divisi_id` via LEFT JOIN — konsisten dengan skema NeonDB aktual dan primary query.
+  - `getTPH` fallback: mengganti `t.divisi_id`, `t.nomor_tph`, `t.active` (tidak ada di NeonDB) dengan `t.name as nomor_tph`, `b.divisi_id` via LEFT JOIN — konsisten dengan skema NeonDB aktual dan primary query.
+  - Fallback sebelumnya selalu gagal dengan `column does not exist` jika primary query gagal, menyebabkan log error yang menyesatkan dan tanpa manfaat nyata.
+
 ## 2026-04-11
 
 ### Added

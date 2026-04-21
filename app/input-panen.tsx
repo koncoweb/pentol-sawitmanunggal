@@ -43,7 +43,7 @@ interface Pemanen {
   id: string;
   operator_code: string;
   name: string;
-  gang_id: string;
+  gang_id: string | null;
 }
 
 interface TPH {
@@ -78,7 +78,11 @@ export default function InputPanenScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const { profile, session, user, loading: authLoading } = useAuth();
-  const { isOffline } = useOfflineData();
+  const { isOffline, getDivisi, getGang, getBlok, getPemanen, getTPH, clearCache } = useOfflineData();
+  const isOfflineRef = useRef(isOffline);
+  useEffect(() => {
+    isOfflineRef.current = isOffline;
+  }, [isOffline]);
   const [loading, setLoading] = useState(false);
   const [isFetchingData, setIsFetchingData] = useState(false); // State for loading indicator
   const scrollViewRef = useRef<ScrollView>(null);
@@ -126,7 +130,7 @@ export default function InputPanenScreen() {
     keterangan: '',
   });
 
-  const loadDivisiData: (divisiId: string, options?: { forceRefresh?: boolean }) => Promise<void> = useCallback(async (divisiId: string, options?: { forceRefresh?: boolean }) => {
+  const loadDivisiData: (divisiId: string, options?: { forceRefresh?: boolean; forceOffline?: boolean }) => Promise<void> = useCallback(async (divisiId: string, options?: { forceRefresh?: boolean; forceOffline?: boolean }) => {
     if (!divisiId) return;
 
     if (!options?.forceRefresh && dataCache.current[divisiId]) {
@@ -141,19 +145,15 @@ export default function InputPanenScreen() {
 
     setIsFetchingData(true);
     try {
-      console.log('Loading local data for divisi:', divisiId);
+      console.log('Loading data for divisi:', divisiId, 'forceOffline:', options?.forceOffline);
 
-      const [gangRows, blokRows, pemanenRows, tphRows] = await Promise.all([
-        runQuery('SELECT id, name FROM gang WHERE divisi_id = ? ORDER BY name', [divisiId]),
-        runQuery('SELECT id, name, tahun_tanam FROM blok WHERE divisi_id = ? ORDER BY name', [divisiId]),
-        runQuery('SELECT id, operator_code, name, gang_id FROM pemanen WHERE divisi_id = ? AND active = 1 ORDER BY name', [divisiId]),
-        runQuery('SELECT id, nomor_tph FROM tph WHERE divisi_id = ? ORDER BY nomor_tph', [divisiId])
+      // Use the new hook methods with forceOffline parameter for immediate offline data
+      const [newGangList, newBlokList, newPemanenList, newTphList] = await Promise.all([
+        getGang(divisiId, { forceOffline: options?.forceOffline }),
+        getBlok(divisiId, { forceOffline: options?.forceOffline }),
+        getPemanen(divisiId, { forceOffline: options?.forceOffline }),
+        getTPH(divisiId, undefined, { forceOffline: options?.forceOffline })
       ]);
-
-      const newGangList = (gangRows || []) as any[];
-      const newBlokList = (blokRows || []) as any[];
-      const newPemanenList = (pemanenRows || []) as any[];
-      const newTphList = (tphRows || []) as any[];
 
       setGangList(newGangList);
       setBlokList(newBlokList);
@@ -167,7 +167,7 @@ export default function InputPanenScreen() {
         tph: newTphList
       };
 
-      console.log('Loaded local data:', {
+      console.log('Loaded data:', {
         gang: newGangList.length,
         blok: newBlokList.length,
         pemanen: newPemanenList.length,
@@ -180,23 +180,23 @@ export default function InputPanenScreen() {
         'Gagal memuat data divisi. Silakan coba lagi.',
         [
           { text: 'Batal', style: 'cancel' },
-          { text: 'Coba Lagi', onPress: () => loadDivisiData(divisiId, { forceRefresh: true }) }
+          { text: 'Coba Lagi', onPress: () => loadDivisiData(divisiId, { forceRefresh: true, forceOffline: options?.forceOffline }) }
         ]
       );
     } finally {
       setIsFetchingData(false);
     }
-  }, []);
+  }, [getGang, getBlok, getPemanen, getTPH]);
 
-  const loadDivisiList = useCallback(async () => {
+  const loadDivisiList = useCallback(async (options?: { forceOffline?: boolean }) => {
     try {
-      const rows = await runQuery('SELECT id, name, estate_name FROM divisi ORDER BY name');
-      console.log('Loaded local divisi:', rows?.length);
-      setDivisiList(rows as any[]);
+      const divisiData = await getDivisi(options);
+      console.log('Loaded divisi:', divisiData?.length);
+      setDivisiList(divisiData as any[]);
     } catch (error) {
       console.error('Error loading divisi list:', error);
     }
-  }, []);
+  }, [getDivisi]);
 
   const clearMasterDataCache = () => {
     dataCache.current = {};
@@ -204,34 +204,41 @@ export default function InputPanenScreen() {
 
   const refreshMasterDataForForm: () => Promise<void> = useCallback(async () => {
     clearMasterDataCache();
-    await loadDivisiList();
+    await loadDivisiList({ forceOffline: isOfflineRef.current });
     const targetDivisiId = activeDivisiRef.current || profile?.divisi_id;
     if (targetDivisiId) {
-      await loadDivisiData(targetDivisiId, { forceRefresh: true });
+      await loadDivisiData(targetDivisiId, { forceRefresh: true, forceOffline: isOfflineRef.current });
     }
   }, [loadDivisiData, loadDivisiList, profile?.divisi_id]);
+  // isOffline intentionally NOT in deps — tracked via isOfflineRef to prevent
+  // this callback (and the sync useEffect) from re-running on every connectivity change.
 
   useEffect(() => {
     activeDivisiRef.current = formData.divisi_id || profile?.divisi_id || '';
   }, [formData.divisi_id, profile?.divisi_id]);
 
   useEffect(() => {
-    // Initial sync
+    let reconnectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Initial sync — load local data first, then sync in background
     const performInitialSync = async () => {
+      // Load local data immediately so UI is ready before network calls
       try {
-        await syncMasterData();
-        console.log('Initial master data sync complete');
-      } catch (err) {
-        console.error('Initial sync master failed:', err);
+        await refreshMasterDataForForm();
+      } catch (refreshError) {
+        console.error('Initial refresh master data failed:', refreshError);
       } finally {
-        try {
-          await refreshMasterDataForForm();
-        } catch (refreshError) {
-          console.error('Initial refresh master data failed:', refreshError);
-        }
         setIsMasterBootstrapping(false);
       }
-      
+
+      // Background sync after UI is populated
+      try {
+        await syncMasterData();
+        clearCache(); // Invalidate Neon DB in-memory cache so next read is fresh
+      } catch (err) {
+        console.error('Initial sync master failed:', err);
+      }
+
       try {
         await syncHarvestQueue();
       } catch (err) {
@@ -241,24 +248,25 @@ export default function InputPanenScreen() {
 
     performInitialSync();
 
-    // Trigger sync when connection is restored
+    // Trigger sync when connection is restored — debounced to fire only once
     const unsubscribeNet = NetInfo.addEventListener((state: any) => {
       if (state.isConnected) {
-        console.log('Connection restored, triggering sync...');
-        (async () => {
+        if (reconnectDebounceTimer) clearTimeout(reconnectDebounceTimer);
+        reconnectDebounceTimer = setTimeout(async () => {
+          console.log('Connection restored, triggering sync...');
           try {
             await syncMasterData();
+            clearCache(); // Ensure no stale Neon cache is used after sync
             await refreshMasterDataForForm();
           } catch (err) {
             console.error('Auto-sync master after reconnect failed:', err);
           }
-
           try {
             await syncHarvestQueue();
           } catch (err) {
             console.error('Auto-sync queue after reconnect failed:', err);
           }
-        })();
+        }, 2000);
       }
     });
 
@@ -267,26 +275,23 @@ export default function InputPanenScreen() {
       const state = await NetInfo.fetch();
       if (state.isConnected) {
         console.log('Performing periodic background sync...');
-        (async () => {
-          try {
-            await syncMasterData();
-            await refreshMasterDataForForm();
-          } catch (err) {
-            console.error('Periodic master sync failed:', err);
-          }
-
-          try {
-            await syncHarvestQueue();
-          } catch (err) {
-            console.error('Periodic queue sync failed:', err);
-          }
-        })();
+        try {
+          await syncMasterData();
+        } catch (err) {
+          console.error('Periodic master sync failed:', err);
+        }
+        try {
+          await syncHarvestQueue();
+        } catch (err) {
+          console.error('Periodic queue sync failed:', err);
+        }
       }
     }, 5 * 60 * 1000); // 5 minutes
 
     return () => {
       clearInterval(syncInterval);
       unsubscribeNet();
+      if (reconnectDebounceTimer) clearTimeout(reconnectDebounceTimer);
     };
   }, [refreshMasterDataForForm]);
 
@@ -301,6 +306,7 @@ export default function InputPanenScreen() {
       }
 
       masterCacheRefreshTimerRef.current = setTimeout(() => {
+        clearCache(); // Clear Neon DB cache before refresh so UI reads freshest source
         refreshMasterDataForForm().catch((error) => {
           console.error('Error refreshing master cache after db change:', error);
         });
@@ -777,14 +783,10 @@ export default function InputPanenScreen() {
                   setBlokList([]);
                   setPemanenList([]);
                   setTphList([]);
-                  setFormData(prev => ({
-                    ...prev,
-                    divisi_id: value,
-                    gang_id: '',
-                    blok_ids: [],
-                    pemanen_id: '',
-                    tph_id: '',
-                  }));
+                  updateField('divisi_id', value);
+                  activeDivisiRef.current = value;
+                  // Load data for selected divisi with forceOffline for immediate response
+                  loadDivisiData(value, { forceOffline: isOffline });
                 }}
                 required
                 searchable={divisiList.length > 5}

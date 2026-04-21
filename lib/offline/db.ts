@@ -18,6 +18,7 @@ export const getLocalDb = async () => {
 const initDb = async (database: SQLite.SQLiteDatabase) => {
   try {
     await database.execAsync("PRAGMA journal_mode = WAL");
+    await database.execAsync("PRAGMA busy_timeout = 5000");
     await database.execAsync("PRAGMA foreign_keys = ON");
     for (const statement of CREATE_TABLES) {
       await database.execAsync(statement);
